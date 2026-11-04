@@ -126,6 +126,22 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _isSearchingAi = false;
       _aiSummaryComment = result.aiSummaryComment;
+      if (result.isLiveAi) {
+        // AIがリアルタイム検索で見つけた新スポットをお気に入り状態を保ったままマージ
+        final favIds = _favoriteSpots.map((s) => s.id).toSet();
+        final newSpots = result.spots.map((s) {
+          if (favIds.contains(s.id)) {
+            final old = _allSpots.firstWhere((o) => o.id == s.id);
+            return s.copyWith(
+              isFavorite: true,
+              pickedBy: old.pickedBy,
+              coupleNote: old.coupleNote,
+            );
+          }
+          return s;
+        }).toList();
+        _allSpots = newSpots;
+      }
       if (_filteredSpots.isNotEmpty) {
         _selectedMapSpot = _filteredSpots.first;
       }
@@ -442,7 +458,26 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: _isSearchingAi
-                            ? const Text('Gemini AIが今週末のイベント・公園情報を整理しています...')
+                            ? const Row(
+                                children: [
+                                  SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Gemini 3.8 Flash がGoogle検索で今週末の最新イベントを調べています...',
+                                      style: TextStyle(
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                ],
+                              )
                             : Text(
                                 _aiSummaryComment,
                                 style: const TextStyle(
