@@ -1,4 +1,4 @@
-// 夫婦間で共有する「ここ行きたい！」お気に入りリスト画面
+// 夫婦間で共有する「ここ行きたい！」リアルタイム同期お気に入りリスト画面
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/outing_spot.dart';
@@ -11,6 +11,8 @@ class FavoritesScreen extends StatefulWidget {
       onUpdateFavorite;
   final ValueChanged<OutingSpot> onRemoveFavorite;
   final ValueChanged<OutingSpot> onOpenSpotDetail;
+  final VoidCallback onTriggerSync;
+  final String syncStatusLabel;
 
   const FavoritesScreen({
     super.key,
@@ -20,6 +22,8 @@ class FavoritesScreen extends StatefulWidget {
     required this.onUpdateFavorite,
     required this.onRemoveFavorite,
     required this.onOpenSpotDetail,
+    required this.onTriggerSync,
+    required this.syncStatusLabel,
   });
 
   @override
@@ -40,46 +44,80 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
 
     return Column(
       children: [
-        // 夫婦の共有ルーム情報ヘッダー
+        // 夫婦のリアルタイム共有ルーム情報ヘッダー
         Container(
           width: double.infinity,
-          margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          margin: const EdgeInsets.fromLTRB(16, 12, 16, 6),
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
-                colorScheme.primaryContainer,
-                colorScheme.secondaryContainer,
+                colorScheme.primaryContainer.withValues(alpha: 0.9),
+                colorScheme.secondaryContainer.withValues(alpha: 0.8),
               ],
             ),
             borderRadius: BorderRadius.circular(16),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black12,
+                blurRadius: 4,
+                offset: Offset(0, 2),
+              ),
+            ],
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('💑', style: TextStyle(fontSize: 28)),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '夫婦の「ここ行きたい！」共有ボード',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              Row(
+                children: [
+                  const Text('💑', style: TextStyle(fontSize: 26)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '夫婦のリアルタイム共有ボード',
+                          style: TextStyle(
+                            fontSize: 15,
                             fontWeight: FontWeight.bold,
                           ),
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: Colors.green,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              '合言葉: ${widget.coupleRoomCode}（同期: ${widget.syncStatusLabel}）',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '家族合言葉: ${widget.coupleRoomCode}（2人のスマホで共有）',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-              ),
-              TextButton.icon(
-                onPressed: () => _showRoomCodeDialog(context),
-                icon: const Icon(Icons.key, size: 18),
-                label: const Text('合言葉変更'),
+                  ),
+                  IconButton.filledTonal(
+                    tooltip: '今すぐ同期',
+                    onPressed: widget.onTriggerSync,
+                    icon: const Icon(Icons.sync, size: 18),
+                  ),
+                  IconButton(
+                    tooltip: '合言葉を変更',
+                    onPressed: () => _showRoomCodeDialog(context),
+                    icon: const Icon(Icons.key, size: 18),
+                  ),
+                ],
               ),
             ],
           ),
@@ -141,7 +179,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          '検索画面で気になるイベントや大きな公園を見つけたら、ハートボタンを押して夫婦の候補リストに追加しましょう！',
+                          '奥様または旦那様がハートボタンを押すと、自動的に2人のスマホに候補が同期されます！',
                           textAlign: TextAlign.center,
                           style:
                               Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -172,7 +210,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      elevation: 1,
+      elevation: 1.5,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
@@ -260,14 +298,10 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                       color: colorScheme.primary,
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      '🅿️ ${spot.parkingInfo}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                  const SizedBox(width: 10),
+                  Text(
+                    spot.weatherText.split(' ').first,
+                    style: const TextStyle(fontSize: 12),
                   ),
                 ],
               ),
@@ -316,7 +350,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                     child: OutlinedButton.icon(
                       onPressed: () => _showEditFavoriteDialog(context, spot),
                       icon: const Icon(Icons.people_alt_outlined, size: 18),
-                      label: const Text('ステータス・メモ変更'),
+                      label: const Text('設定・メモ'),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -336,7 +370,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                         );
                       },
                       icon: const Icon(Icons.share, size: 18),
-                      label: const Text('妻/夫へ共有コピー'),
+                      label: const Text('LINEで共有'),
                     ),
                   ),
                 ],
@@ -348,7 +382,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     );
   }
 
-  /// 夫婦のステータス（夫・妻・2人とも）やメモを編集するダイアログ
   void _showEditFavoriteDialog(BuildContext context, OutingSpot spot) {
     var selectedPick = spot.pickedBy ?? PartnerPick.both;
     final noteController = TextEditingController(text: spot.coupleNote);
@@ -393,7 +426,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                     controller: noteController,
                     maxLines: 2,
                     decoration: const InputDecoration(
-                      hintText: '例：土曜のお昼に行きたい！お弁当持参で',
+                      hintText: '例：土曜のお昼に行きたい！レジャーシート持参で',
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -423,7 +456,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     );
   }
 
-  /// 夫婦間で共有するための「合言葉」設定ダイアログ
   void _showRoomCodeDialog(BuildContext context) {
     final controller = TextEditingController(text: widget.coupleRoomCode);
     showDialog<void>(
@@ -436,7 +468,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'ご夫婦の2台のAndroidスマホで同じ「合言葉」を設定すると、お気に入りリストを同期・共有できます。',
+                'ご夫婦の2台のAndroidスマホで同じ「合言葉」を設定すると、どちらかが追加した候補やメモが自動でリアルタイム同期されます。',
                 style: TextStyle(fontSize: 13),
               ),
               const SizedBox(height: 12),
@@ -444,7 +476,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 controller: controller,
                 decoration: const InputDecoration(
                   labelText: '家族ルーム合言葉',
-                  hintText: '例: hiro-family-2026',
+                  hintText: '例: tanaka-family',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -462,7 +494,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 }
                 Navigator.of(dialogContext).pop();
               },
-              child: const Text('設定する'),
+              child: const Text('設定＆同期'),
             ),
           ],
         );

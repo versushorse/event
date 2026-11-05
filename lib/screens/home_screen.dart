@@ -1,9 +1,12 @@
-// ホーム画面（AI検索・タイプ別フィルタ・提案リスト・ドライブ圏内マップ表示）
-import 'dart:math' as math;
+// ホーム画面（AI提案検索・年齢別フィルタ・持ち物チェック・Google Maps・夫婦リアルタイム同期・GPS現在地連携）
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/outing_spot.dart';
 import '../services/gemini_service.dart';
+import '../services/location_service.dart';
+import '../services/sync_service.dart';
 import 'favorites_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -14,33 +17,38 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  /// 全スポットデータ（お気に入り状態を含む）
+  /// 全スポットデータ
   late List<OutingSpot> _allSpots;
 
-  /// 現在のボトムナビゲーションのタブ番号（0: 探す, 1: マップ, 2: 夫婦の行きたいリスト）
+  /// 現在のボトムナビタブ番号（0: 探す, 1: マップ, 2: 夫婦の行きたい）
   int _currentTabIndex = 0;
 
   /// 出発エリア名
-  String _departureArea = '現在地（自宅周辺）';
+  String _departureArea = '現在地を取得中...';
 
-  /// 車での最大移動時間フィルタ（60分 or 120分）
+  /// 現在地の位置情報（GPS）
+  LocationResult? _currentLocation;
+
+  /// 現在地取得中フラグ
+  bool _isLocating = false;
+
+  /// 車での最大移動時間（60分 or 120分）
   int _maxDriveMinutes = 120;
 
-  /// 選択中の種別フィルタ（nullならすべて）
+  /// 選択中の種別フィルタ
   SpotCategory? _selectedCategory;
 
-  /// 選択中のタイプタグフィルタ（nullならすべて）
+  /// 選択中のタイプタグフィルタ
   SpotTag? _selectedTag;
 
   /// AI検索バーの入力コントローラ
   final TextEditingController _searchController = TextEditingController();
 
-  /// AI検索中かどうかのフラグ
+  /// AI検索中フラグ
   bool _isSearchingAi = false;
 
   /// AIからの要約コメント
-  String _aiSummaryComment =
-      '📍 現在地から車で1〜2時間圏内で行ける「今週末の催し物」と「大型公園・観光地」を提案しています（すべて駐車場情報付き）。';
+  String _aiSummaryComment = '';
 
   /// マップ画面で選択中のスポット
   OutingSpot? _selectedMapSpot;
@@ -48,65 +56,224 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 夫婦共有ルームの合言葉
   String _coupleRoomCode = 'family-weekend';
 
+  /// 夫婦同期のステータス文字列
+  String _syncStatusLabel = '確認中...';
+
+  /// Googleマップコントローラ
+  GoogleMapController? _mapController;
+
+  /// Googleマップの表示タイプ（通常 or 航空写真）
+  MapType _currentMapType = MapType.normal;
+
+  /// ドライブ持ち物チェックリストの状態
+  final Map<String, bool> _packingList = {
+    'レジャーシート・ミニテント': true,
+    '子供の着替え（1〜2回分）': true,
+    'オムツ・おしりふき（乳幼児）': false,
+    '水筒・飲み物・おやつ': true,
+    'ビニール袋（ゴミ・濡れ物用）': true,
+    'タオル・ウェットティッシュ': true,
+    '羽織る上着・防寒着': false,
+    '虫除け・日焼け止め': false,
+  };
+
   @override
   void initState() {
     super.initState();
     _allSpots = GeminiOutingService.getInitialSpots();
     _selectedMapSpot = _allSpots.first;
+    _aiSummaryComment =
+        '📍 現在地から車で1〜2時間圏内で行ける、今週末（${GeminiOutingService.getThisWeekendDates()}）の最新催し物・大型公園を提案しています。';
+    _initCoupleSync();
+    _fetchCurrentLocation(autoFetch: true);
   }
 
-  @override
-  void reassemble() {
-    super.reassemble();
-    _allSpots = GeminiOutingService.getInitialSpots();
-    _selectedMapSpot = _allSpots.first;
+  /// GPS現在地を取得し、各スポットまでの距離・所要時間を自動再計算
+  Future<void> _fetchCurrentLocation({
+    bool autoFetch = false,
+    bool moveMap = false,
+  }) async {
+    if (_isLocating) return;
+    setState(() => _isLocating = true);
+
+    final loc = await LocationService.getCurrentLocation();
+    if (!mounted) return;
+
+    if (loc != null) {
+      setState(() {
+        _isLocating = false;
+        _currentLocation = loc;
+        _departureArea = loc.label;
+        _recalculateSpotDistances(loc.latitude, loc.longitude);
+      });
+
+      // マップカメラを現在地にフォーカス
+      if (moveMap && _mapController != null) {
+        _mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: LatLng(loc.latitude, loc.longitude),
+              zoom: 11.5,
+            ),
+          ),
+        );
+      }
+
+      if (!autoFetch) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📍 現在地（${loc.label}）を取得しました！お出かけ時間を更新しました'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } else {
+      setState(() {
+        _isLocating = false;
+        if (_departureArea == '現在地を取得中...') {
+          _departureArea = '現在地（東京・神奈川・埼玉・千葉）';
+        }
+      });
+
+      if (!autoFetch) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⚠️ 現在地を取得できませんでした。端末の位置情報（GPS）をONにしてください'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  /// 現在地からの実距離（km）とおおよそのドライブ所要時間をスポットに反映
+  void _recalculateSpotDistances(double userLat, double userLng) {
+    _allSpots = _allSpots.map<OutingSpot>((spot) {
+      final distKm = LocationService.calculateDistanceKm(
+        startLat: userLat,
+        startLng: userLng,
+        endLat: spot.latitude,
+        endLng: spot.longitude,
+      );
+      final driveMin = LocationService.estimateDriveMinutes(distKm);
+
+      return spot.copyWith(
+        driveMinutes: driveMin,
+        distanceKm: distKm,
+      );
+    }).toList();
+
+    // 距離が近い順に並び替え
+    _allSpots.sort((a, b) => a.driveMinutes.compareTo(b.driveMinutes));
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _mapController?.dispose();
     super.dispose();
   }
 
-  /// 現在のフィルタ条件に合致するスポット一覧を取得する
+  /// 夫婦間のローカル保存およびクラウド同期の初期化
+  Future<void> _initCoupleSync() async {
+    final code = await CoupleSyncService.getRoomCode();
+    final savedFavs = await CoupleSyncService.loadLocalFavorites();
+
+    setState(() {
+      _coupleRoomCode = code;
+      if (savedFavs.isNotEmpty) {
+        final favIds = savedFavs.map((s) => s.id).toSet();
+        _allSpots = _allSpots.map((spot) {
+          if (favIds.contains(spot.id)) {
+            final saved = savedFavs.firstWhere((s) => s.id == spot.id);
+            return spot.copyWith(
+              isFavorite: true,
+              pickedBy: saved.pickedBy,
+              coupleNote: saved.coupleNote,
+            );
+          }
+          return spot;
+        }).toList();
+      }
+    });
+
+    // バックグラウンドでクラウド最新データを取得
+    _triggerCloudSync();
+  }
+
+  /// クラウド同期を実行する
+  Future<void> _triggerCloudSync() async {
+    setState(() => _syncStatusLabel = '同期中...');
+    final localFavs = _favoriteSpots;
+    final merged = await CoupleSyncService.syncWithCloud(
+      roomCode: _coupleRoomCode,
+      localFavorites: localFavs,
+    );
+
+    if (!mounted) return;
+    if (merged != null) {
+      final mergedIds = merged.map((s) => s.id).toSet();
+      setState(() {
+        _allSpots = _allSpots.map((spot) {
+          if (mergedIds.contains(spot.id)) {
+            final cloudSpot = merged.firstWhere((s) => s.id == spot.id);
+            return spot.copyWith(
+              isFavorite: true,
+              pickedBy: cloudSpot.pickedBy,
+              coupleNote: cloudSpot.coupleNote,
+            );
+          } else {
+            return spot.copyWith(isFavorite: false);
+          }
+        }).toList();
+      });
+    }
+
+    final lastSync = await CoupleSyncService.getLastSyncLabel();
+    if (!mounted) return;
+    setState(() {
+      _syncStatusLabel = lastSync;
+    });
+  }
+
+  /// フィルタ条件に合致するスポット一覧
   List<OutingSpot> get _filteredSpots {
-    return _allSpots.where((spot) {
-      if (spot.driveMinutes > _maxDriveMinutes) return false;
+    final withinTime = _allSpots.where((spot) {
       if (_selectedCategory != null && spot.category != _selectedCategory) {
         return false;
       }
       if (_selectedTag != null && !spot.tags.contains(_selectedTag)) {
         return false;
       }
+      // Google Places API等のライブ検索結果が含まれている場合はAPI側で検索済みのためそのまま通す
+      if (spot.id.startsWith('google_place_')) {
+        return true;
+      }
       final query = _searchController.text.trim();
       if (query.isNotEmpty) {
         final matchTitle = spot.title.contains(query) ||
             spot.subtitle.contains(query) ||
             spot.recommendPoints.any((p) => p.contains(query));
-        final matchFood = (query.contains('食') ||
-                query.contains('グルメ') ||
-                query.contains('マルシェ')) &&
-            spot.tags.contains(SpotTag.food);
-        final matchKids = (query.contains('子供') ||
-                query.contains('遊具') ||
-                query.contains('公園')) &&
-            spot.tags.contains(SpotTag.kids);
-        final matchRain =
-            (query.contains('雨') || query.contains('室内')) &&
-                spot.tags.contains(SpotTag.indoor);
-        if (!matchTitle && !matchFood && !matchKids && !matchRain) {
+        final matchFood = (query.contains('食') || query.contains('グルメ') || query.contains('マルシェ')) && spot.tags.contains(SpotTag.food);
+        final matchBaby = (query.contains('赤ちゃん') || query.contains('0歳') || query.contains('1歳') || query.contains('2歳')) && spot.tags.contains(SpotTag.baby);
+        final matchKids = (query.contains('子供') || query.contains('遊具') || query.contains('アスレチック')) && (spot.tags.contains(SpotTag.kids) || spot.tags.contains(SpotTag.toddler));
+        final matchRain = (query.contains('雨') || query.contains('室内')) && spot.tags.contains(SpotTag.indoor);
+        if (!matchTitle && !matchFood && !matchBaby && !matchKids && !matchRain) {
           return false;
         }
       }
       return true;
     }).toList();
+
+    final timeFiltered = withinTime.where((s) => s.driveMinutes <= _maxDriveMinutes).toList();
+    return timeFiltered.isNotEmpty ? timeFiltered : withinTime;
   }
 
-  /// お気に入り登録済みのスポット一覧を取得する
+  /// お気に入り登録済みスポット一覧
   List<OutingSpot> get _favoriteSpots =>
       _allSpots.where((s) => s.isFavorite).toList();
 
-  /// Gemini AI検索を実行する
+  /// AI検索＆Google APIリアルタイム検索を実行する
   Future<void> _runAiSearch([String? presetQuery]) async {
     if (presetQuery != null) {
       _searchController.text = presetQuery;
@@ -115,11 +282,15 @@ class _HomeScreenState extends State<HomeScreen> {
       _isSearchingAi = true;
     });
 
+    final currentFavs = List<OutingSpot>.from(_favoriteSpots);
+
     final result = await GeminiOutingService.searchWithAi(
       query: _searchController.text,
       departureArea: _departureArea,
       maxDriveMinutes: _maxDriveMinutes,
       currentSpots: _allSpots,
+      userLat: _currentLocation?.latitude,
+      userLng: _currentLocation?.longitude,
     );
 
     if (!mounted) return;
@@ -127,20 +298,32 @@ class _HomeScreenState extends State<HomeScreen> {
       _isSearchingAi = false;
       _aiSummaryComment = result.aiSummaryComment;
       if (result.isLiveAi) {
-        // AIがリアルタイム検索で見つけた新スポットをお気に入り状態を保ったままマージ
-        final favIds = _favoriteSpots.map((s) => s.id).toSet();
-        final newSpots = result.spots.map((s) {
-          if (favIds.contains(s.id)) {
-            final old = _allSpots.firstWhere((o) => o.id == s.id);
-            return s.copyWith(
-              isFavorite: true,
-              pickedBy: old.pickedBy,
-              coupleNote: old.coupleNote,
+        final favMap = {for (final f in currentFavs) f.id: f};
+        final mergedSpots = <OutingSpot>[];
+        final addedIds = <String>{};
+
+        for (final s in result.spots) {
+          addedIds.add(s.id);
+          if (favMap.containsKey(s.id)) {
+            final old = favMap[s.id]!;
+            mergedSpots.add(
+              s.copyWith(
+                isFavorite: true,
+                pickedBy: old.pickedBy,
+                coupleNote: old.coupleNote,
+              ),
             );
+          } else {
+            mergedSpots.add(s);
           }
-          return s;
-        }).toList();
-        _allSpots = newSpots;
+        }
+        // 既存のお気に入りで今回の検索結果に含まれなかったものも保持（夫婦ボードから消えないように）
+        for (final fav in currentFavs) {
+          if (!addedIds.contains(fav.id)) {
+            mergedSpots.add(fav);
+          }
+        }
+        _allSpots = mergedSpots;
       }
       if (_filteredSpots.isNotEmpty) {
         _selectedMapSpot = _filteredSpots.first;
@@ -148,8 +331,8 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  /// お気に入り（夫婦の行きたい！リスト）のON/OFFを切り替える
-  void _toggleFavorite(OutingSpot target) {
+  /// お気に入りON/OFF切り替え
+  Future<void> _toggleFavorite(OutingSpot target) async {
     setState(() {
       _allSpots = _allSpots.map((spot) {
         if (spot.id != target.id) return spot;
@@ -161,14 +344,19 @@ class _HomeScreenState extends State<HomeScreen> {
       }).toList();
     });
 
+    // ローカル保存＆クラウド同期
+    await CoupleSyncService.saveLocalFavorites(_favoriteSpots);
+    _triggerCloudSync();
+
     final updated = _allSpots.firstWhere((s) => s.id == target.id);
+    if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           updated.isFavorite
-              ? '❤️ 「${updated.title}」を夫婦の行きたいリストに追加しました！'
-              : '「${updated.title}」を行きたいリストから外しました',
+              ? '❤️ 「${updated.title}」を夫婦共有ボードに追加しました！'
+              : '「${updated.title}」を共有ボードから外しました',
         ),
         duration: const Duration(seconds: 2),
       ),
@@ -176,8 +364,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// 夫婦のお気に入りステータスやメモを更新する
-  void _updateFavoriteDetail(
-      OutingSpot target, PartnerPick pickedBy, String note) {
+  Future<void> _updateFavoriteDetail(
+      OutingSpot target, PartnerPick pickedBy, String note) async {
     setState(() {
       _allSpots = _allSpots.map((spot) {
         if (spot.id != target.id) return spot;
@@ -188,6 +376,23 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }).toList();
     });
+
+    await CoupleSyncService.saveLocalFavorites(_favoriteSpots);
+    _triggerCloudSync();
+  }
+
+  /// 外部Googleマップアプリを起動してナビを開始する
+  Future<void> _launchGoogleMaps(OutingSpot spot) async {
+    final uri = Uri.parse(spot.googleMapsUrl);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      await Clipboard.setData(ClipboardData(text: spot.googleMapsUrl));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('🗺️ GoogleマップのURLをコピーしました！')),
+      );
+    }
   }
 
   @override
@@ -206,7 +411,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '週末どこ行く？AIお出かけナビ',
+                    '週末どこ行く？AIナビ',
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                   ),
                   Text(
@@ -223,6 +428,11 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         actions: [
           IconButton(
+            tooltip: '🎒 持ち物チェック',
+            onPressed: () => _showPackingListSheet(context),
+            icon: const Icon(Icons.backpack_outlined),
+          ),
+          IconButton(
             tooltip: '出発エリアの設定',
             onPressed: () => _showDepartureAreaDialog(context),
             icon: const Icon(Icons.edit_location_alt_outlined),
@@ -233,12 +443,16 @@ class _HomeScreenState extends State<HomeScreen> {
         index: _currentTabIndex,
         children: [
           _buildExploreTab(context),
-          _buildMapTab(context),
+          _buildGoogleMapTab(context),
           FavoritesScreen(
             favoriteSpots: _favoriteSpots,
             coupleRoomCode: _coupleRoomCode,
-            onRoomCodeChanged: (code) {
+            syncStatusLabel: _syncStatusLabel,
+            onTriggerSync: _triggerCloudSync,
+            onRoomCodeChanged: (code) async {
               setState(() => _coupleRoomCode = code);
+              await CoupleSyncService.saveRoomCode(code);
+              _triggerCloudSync();
             },
             onUpdateFavorite: _updateFavoriteDetail,
             onRemoveFavorite: _toggleFavorite,
@@ -343,14 +557,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Row(
                     children: [
                       _buildQuickPromptChip('🍔 今週末のグルメ・マルシェ'),
-                      _buildQuickPromptChip('👨‍👩‍👧‍👦 子供が思いっきり遊べる大型公園'),
+                      _buildQuickPromptChip('👶 0〜2歳の赤ちゃんとお散歩'),
+                      _buildQuickPromptChip('🏃 小学生も夢中の巨大アスレチック'),
                       _buildQuickPromptChip('☔ 雨でも安心の屋内スポット'),
                     ],
                   ),
                 ),
                 const SizedBox(height: 10),
 
-                // 移動時間（車で1時間 or 1〜2時間）切り替え ＆ 種別フィルタ
+                // 移動時間切り替え
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -385,7 +600,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 6),
 
-                // カテゴリ（イベント / 大型公園 / 観光・道の駅）＆ タイプ別タグフィルタ
+                // カテゴリ＆子供の年齢別・タイプ別タグフィルタ
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -538,7 +753,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// ワンタップでAI検索を実行する質問チップ
   Widget _buildQuickPromptChip(String text) {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
@@ -549,7 +763,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// スポット・イベントの提案カード1件分
+  /// スポット提案カード1件分
   Widget _buildSpotCard(BuildContext context, OutingSpot spot) {
     final colorScheme = Theme.of(context).colorScheme;
     final isEvent = spot.category == SpotCategory.event;
@@ -566,7 +780,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 最上部：種別バッジ ＋ 車での所要時間 ＋ お気に入りボタン
+              // 最上部：種別バッジ ＋ 所要時間 ＋ 天気予報 ＋ ハートボタン
               Row(
                 children: [
                   Container(
@@ -597,7 +811,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(width: 8),
                   Container(
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: colorScheme.primaryContainer,
                       borderRadius: BorderRadius.circular(20),
@@ -619,9 +833,22 @@ class _HomeScreenState extends State<HomeScreen> {
                       ],
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade50,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      spot.weatherText.split(' ').first,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
                   const Spacer(),
                   IconButton.filledTonal(
-                    tooltip: '夫婦の行きたい！リストに追加',
+                    tooltip: '夫婦共有ボードに追加',
                     onPressed: () => _toggleFavorite(spot),
                     icon: Icon(
                       spot.isFavorite ? Icons.favorite : Icons.favorite_border,
@@ -649,7 +876,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 10),
 
-              // タイプ別タグ一覧（食べる系・子供向けなど）
+              // タイプ別・子供年齢別タグ一覧
               Wrap(
                 spacing: 6,
                 runSpacing: 6,
@@ -671,7 +898,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 12),
 
-              // 開催場所住所・開催日時・駐車場情報ボックス
+              // 開催場所住所・日時・駐車場情報ボックス
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
@@ -729,7 +956,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 12),
 
-              // AIおすすめポイント（3点）
+              // おすすめポイント（3点）
               const Text(
                 '✨ おすすめポイント',
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
@@ -757,7 +984,7 @@ class _HomeScreenState extends State<HomeScreen> {
               }),
               const SizedBox(height: 10),
 
-              // 下部ボタン（地図で確認 / 詳細・共有）
+              // 下部ボタン（マップへ移動 / 詳細・共有）
               Row(
                 children: [
                   Expanded(
@@ -767,6 +994,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           _selectedMapSpot = spot;
                           _currentTabIndex = 1;
                         });
+                        _mapController?.animateCamera(
+                          CameraUpdate.newLatLngZoom(
+                            LatLng(spot.latitude, spot.longitude),
+                            12.5,
+                          ),
+                        );
                       },
                       icon: const Icon(Icons.location_on_outlined, size: 18),
                       label: const Text('マップで位置を見る'),
@@ -777,7 +1010,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: FilledButton.tonalIcon(
                       onPressed: () => _showSpotDetailSheet(context, spot),
                       icon: const Icon(Icons.info_outline, size: 18),
-                      label: const Text('詳細・LINE共有'),
+                      label: const Text('詳細・共有'),
                     ),
                   ),
                 ],
@@ -789,287 +1022,228 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// タブ2：現在地から車で1時間・2時間圏内のインタラクティブ・ドライブマップ画面
-  Widget _buildMapTab(BuildContext context) {
+  /// タブ2：Google Maps SDK による本格地図画面
+  Widget _buildGoogleMapTab(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final spots = _filteredSpots;
     final activeSpot = _selectedMapSpot ?? (spots.isNotEmpty ? spots.first : null);
 
-    return Column(
+    // 各スポットのピン（マーカー）を作成
+    final markers = <Marker>{};
+    for (final spot in spots) {
+      final isSelected = activeSpot?.id == spot.id;
+      final isEvent = spot.category == SpotCategory.event;
+
+      markers.add(
+        Marker(
+          markerId: MarkerId(spot.id),
+          position: LatLng(spot.latitude, spot.longitude),
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            isEvent
+                ? BitmapDescriptor.hueOrange
+                : BitmapDescriptor.hueCyan,
+          ),
+          infoWindow: InfoWindow(
+            title: '${spot.category.icon} ${spot.title}',
+            snippet: '${spot.driveTimeLabel} / 🅿️ ${spot.parkingInfo}',
+          ),
+          zIndexInt: isSelected ? 2 : 1,
+          onTap: () {
+            setState(() => _selectedMapSpot = spot);
+          },
+        ),
+      );
+    }
+
+    final initialCenter = _currentLocation != null
+        ? LatLng(_currentLocation!.latitude, _currentLocation!.longitude)
+        : (activeSpot != null
+            ? LatLng(activeSpot.latitude, activeSpot.longitude)
+            : const LatLng(35.75, 139.65));
+
+    return Stack(
       children: [
-        // マップ上部の凡例バー
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          color: colorScheme.surfaceContainerLow,
-          child: Row(
-            children: [
-              const Icon(Icons.radar, size: 18),
-              const SizedBox(width: 6),
-              const Expanded(
-                child: Text(
-                  'ドライブ圏内マップ（内円:1h / 外円:2h）',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        // 本物の Google Maps ウィジェット
+        GoogleMap(
+          initialCameraPosition: CameraPosition(
+            target: initialCenter,
+            zoom: 10.0,
+          ),
+          mapType: _currentMapType,
+          markers: markers,
+          myLocationEnabled: true,
+          myLocationButtonEnabled: false,
+          zoomControlsEnabled: false,
+          onMapCreated: (controller) {
+            _mapController = controller;
+          },
+        ),
+
+        // マップ上部：凡例 ＆ 地図タイプ（通常/衛星写真）切り替えボタン
+        Positioned(
+          top: 12,
+          left: 16,
+          right: 16,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.95),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: const [
+                BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 2)),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(width: 10, height: 10, decoration: const BoxDecoration(color: Colors.orange, shape: BoxShape.circle)),
+                const SizedBox(width: 4),
+                const Text('イベント', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                const SizedBox(width: 10),
+                Container(width: 10, height: 10, decoration: const BoxDecoration(color: Colors.cyan, shape: BoxShape.circle)),
+                const SizedBox(width: 4),
+                const Text('公園・観光', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                const Spacer(),
+                InkWell(
+                  onTap: () {
+                    setState(() {
+                      _currentMapType = _currentMapType == MapType.normal
+                          ? MapType.hybrid
+                          : MapType.normal;
+                    });
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _currentMapType == MapType.normal ? Icons.satellite_alt : Icons.map,
+                          size: 14,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _currentMapType == MapType.normal ? '航空写真' : '地図',
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              Container(
-                width: 10,
-                height: 10,
-                decoration: const BoxDecoration(
-                  color: Colors.deepOrange,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 4),
-              const Text('イベント', style: TextStyle(fontSize: 11)),
-              const SizedBox(width: 8),
-              Container(
-                width: 10,
-                height: 10,
-                decoration: const BoxDecoration(
-                  color: Colors.teal,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 4),
-              const Text('公園・観光', style: TextStyle(fontSize: 11)),
-            ],
+              ],
+            ),
           ),
         ),
 
-        // インタラクティブマップキャンバス
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final center = Offset(
-                constraints.maxWidth / 2,
-                constraints.maxHeight / 2,
-              );
-              final maxRadius =
-                  math.min(constraints.maxWidth, constraints.maxHeight) * 0.42;
-
-              return Stack(
-                children: [
-                  // 背景の地図グリッド＆1時間/2時間圏内サークル描画
-                  CustomPaint(
-                    size: Size(constraints.maxWidth, constraints.maxHeight),
-                    painter: _DriveRadarMapPainter(
-                      center: center,
-                      maxRadius: maxRadius,
-                      primaryColor: colorScheme.primary,
-                    ),
-                  ),
-
-                  // 中央：現在地（自宅）ピン
-                  Positioned(
-                    left: center.dx - 44,
-                    top: center.dy - 20,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: colorScheme.primary,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Colors.black26,
-                            blurRadius: 6,
-                            offset: Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.home, size: 15, color: Colors.white),
-                          SizedBox(width: 4),
-                          Text(
-                            '現在地',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
+        // マップ下部：選択中スポットのフロート詳細カード
+        if (activeSpot != null)
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: Card(
+              elevation: 6,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${activeSpot.category.icon} ${activeSpot.title}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // 各スポットのピンを所要時間＆方角に応じて配置
-                  ...spots.asMap().entries.map((entry) {
-                    final index = entry.key;
-                    final spot = entry.value;
-                    final isSelected = activeSpot?.id == spot.id;
-                    final isEvent = spot.category == SpotCategory.event;
-
-                    // 所要時間（120分満点）を半径比率に変換し、方角を分散配置
-                    final ratio = (spot.driveMinutes / 120.0).clamp(0.25, 1.0);
-                    final angle = (index * (2 * math.pi / spots.length)) -
-                        (math.pi / 3);
-                    final pinX = center.dx + math.cos(angle) * maxRadius * ratio;
-                    final pinY = center.dy + math.sin(angle) * maxRadius * ratio;
-
-                    final maxLeft = math.max(8.0, constraints.maxWidth - 138);
-                    final maxTop = math.max(8.0, constraints.maxHeight - 54);
-                    return Positioned(
-                      left: (pinX - 65).clamp(8.0, maxLeft),
-                      top: (pinY - 22).clamp(8.0, maxTop),
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() => _selectedMapSpot = spot);
-                        },
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          padding: EdgeInsets.symmetric(
-                            horizontal: isSelected ? 10 : 8,
-                            vertical: isSelected ? 6 : 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? (isEvent
-                                    ? Colors.deepOrange.shade700
-                                    : Colors.teal.shade700)
-                                : Colors.white,
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(
-                              color: isEvent ? Colors.deepOrange : Colors.teal,
-                              width: isSelected ? 2.5 : 1.5,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black
-                                    .withValues(alpha: isSelected ? 0.28 : 0.12),
-                                blurRadius: isSelected ? 8 : 4,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(spot.category.icon,
-                                  style: const TextStyle(fontSize: 13)),
-                              const SizedBox(width: 4),
-                              ConstrainedBox(
-                                constraints:
-                                    const BoxConstraints(maxWidth: 95),
-                                child: Text(
-                                  spot.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.bold,
-                                    color: isSelected
-                                        ? Colors.white
-                                        : Colors.black87,
-                                  ),
-                                ),
-                              ),
-                            ],
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          activeSpot.driveTimeLabel,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.primary,
                           ),
                         ),
-                      ),
-                    );
-                  }),
-                ],
-              );
-            },
-          ),
-        ),
-
-        // マップ下部の選択中スポット情報カード
-        if (activeSpot != null)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: colorScheme.surface,
-              boxShadow: const [
-                BoxShadow(
-                  color: Colors.black12,
-                  blurRadius: 10,
-                  offset: Offset(0, -2),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${activeSpot.category.icon} ${activeSpot.title}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(height: 4),
                     Text(
-                      activeSpot.driveTimeLabel,
+                      '📍 ${activeSpot.address}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    Text(
+                      '🅿️ ${activeSpot.parkingInfo}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
                         color: colorScheme.primary,
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '📍 ${activeSpot.address} / 🅿️ ${activeSpot.parkingInfo}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12.5),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () =>
-                            _showSpotDetailSheet(context, activeSpot),
-                        icon: const Icon(Icons.article_outlined, size: 18),
-                        label: const Text('おすすめ詳細を見る'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: () async {
-                          await Clipboard.setData(
-                            ClipboardData(text: activeSpot.googleMapsUrl),
-                          );
-                          if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                '🗺️ Googleマップ検索URLをコピーしました: ${activeSpot.title}',
-                              ),
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.navigation_outlined, size: 18),
-                        label: const Text('GoogleマップURL'),
-                      ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => _showSpotDetailSheet(context, activeSpot),
+                            icon: const Icon(Icons.info_outline, size: 16),
+                            label: const Text('おすすめ詳細'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: () => _launchGoogleMaps(activeSpot),
+                            icon: const Icon(Icons.navigation, size: 16),
+                            label: const Text('ナビ開始'),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
+              ),
             ),
           ),
+
+        // マップ右側：現在地へ戻るボタン
+        Positioned(
+          right: 16,
+          bottom: activeSpot != null ? 190 : 20,
+          child: FloatingActionButton.small(
+            heroTag: 'map_current_location_fab',
+            backgroundColor: Colors.white,
+            foregroundColor: colorScheme.primary,
+            elevation: 4,
+            onPressed: () => _fetchCurrentLocation(moveMap: true),
+            tooltip: '現在地に移動',
+            child: _isLocating
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2.2),
+                  )
+                : const Icon(Icons.my_location),
+          ),
+        ),
       ],
     );
   }
 
-  /// スポットの詳細・AIワンポイントアドバイス・夫婦共有シートを表示する
+  /// スポット詳細＆AIアドバイスシート
   void _showSpotDetailSheet(BuildContext context, OutingSpot spot) {
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -1080,8 +1254,8 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (sheetContext) {
         return DraggableScrollableSheet(
           expand: false,
-          initialChildSize: 0.78,
-          maxChildSize: 0.92,
+          initialChildSize: 0.82,
+          maxChildSize: 0.94,
           minChildSize: 0.5,
           builder: (context, scrollController) {
             return SingleChildScrollView(
@@ -1115,7 +1289,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(spot.subtitle),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   Wrap(
                     spacing: 6,
                     runSpacing: 6,
@@ -1130,27 +1304,30 @@ class _HomeScreenState extends State<HomeScreen> {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.location_on_outlined),
-                    title: const Text('開催場所・住所',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    title: const Text('開催場所・住所', style: TextStyle(fontWeight: FontWeight.bold)),
                     subtitle: Text(spot.address),
                   ),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.calendar_today_outlined),
-                    title: const Text('開催日時・営業時間',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    title: const Text('開催日程・営業時間', style: TextStyle(fontWeight: FontWeight.bold)),
                     subtitle: Text(spot.scheduleText),
                   ),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.wb_sunny_outlined),
+                    title: const Text('今週末の天気予報', style: TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text(spot.weatherText),
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.local_parking),
-                    title: const Text('駐車場・アクセス情報',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    title: const Text('駐車場・アクセス情報', style: TextStyle(fontWeight: FontWeight.bold)),
                     subtitle: Text(spot.parkingInfo),
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    '✨ Gemini AIのおすすめポイント',
+                    '✨ おすすめポイント',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
@@ -1159,8 +1336,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('✔ ',
-                                style: TextStyle(color: Colors.teal)),
+                            const Text('✔ ', style: TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
                             Expanded(child: Text(p)),
                           ],
                         ),
@@ -1182,17 +1358,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const Text(
-                                'ドライブ＆混雑回避のワンポイント',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                ),
+                                'ドライブ＆混雑回避のアドバイス',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                               ),
                               const SizedBox(height: 2),
-                              Text(
-                                spot.aiTip,
-                                style: const TextStyle(fontSize: 13),
-                              ),
+                              Text(spot.aiTip, style: const TextStyle(fontSize: 13)),
                             ],
                           ),
                         ),
@@ -1209,37 +1379,23 @@ class _HomeScreenState extends State<HomeScreen> {
                             Navigator.of(sheetContext).pop();
                           },
                           icon: Icon(
-                            spot.isFavorite
-                                ? Icons.favorite
-                                : Icons.favorite_border,
+                            spot.isFavorite ? Icons.favorite : Icons.favorite_border,
                             color: Colors.pink,
                           ),
                           label: Text(
-                            spot.isFavorite
-                                ? '夫婦リスト登録済み'
-                                : '行きたい！に追加',
+                            spot.isFavorite ? '共有ボード登録中' : '行きたい！に追加',
                           ),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: FilledButton.icon(
-                          onPressed: () async {
-                            await Clipboard.setData(
-                              ClipboardData(text: spot.toShareText()),
-                            );
-                            if (!sheetContext.mounted) return;
+                          onPressed: () {
                             Navigator.of(sheetContext).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  '📋 LINEで妻/夫に送れる紹介文＆GoogleマップURLをコピーしました！',
-                                ),
-                              ),
-                            );
+                            _launchGoogleMaps(spot);
                           },
-                          icon: const Icon(Icons.share),
-                          label: const Text('LINE共有用コピー'),
+                          icon: const Icon(Icons.navigation),
+                          label: const Text('ナビ開始'),
                         ),
                       ),
                     ],
@@ -1253,7 +1409,74 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// 出発エリア（自宅や現在地）を変更するダイアログ
+  /// 🎒 ドライブお出かけ持ち物チェックリストモーダル
+  void _showPackingListSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final checkedCount = _packingList.values.where((v) => v).length;
+            return Container(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text('🎒 ', style: TextStyle(fontSize: 22)),
+                      Text(
+                        'ドライブ持ち物チェック ($checkedCount/${_packingList.length})',
+                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    '週末のお出かけ前に車に積んだかチェックしましょう！',
+                    style: TextStyle(fontSize: 12.5, color: Colors.grey),
+                  ),
+                  const Divider(height: 20),
+                  ..._packingList.keys.map((item) {
+                    final isChecked = _packingList[item] ?? false;
+                    return CheckboxListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        item,
+                        style: TextStyle(
+                          decoration: isChecked ? TextDecoration.lineThrough : null,
+                          color: isChecked ? Colors.grey : Colors.black87,
+                        ),
+                      ),
+                      value: isChecked,
+                      onChanged: (val) {
+                        setState(() => _packingList[item] = val ?? false);
+                        setModalState(() {});
+                      },
+                    );
+                  }),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      child: const Text('チェック完了して閉じる'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// 出発エリア変更ダイアログ
   void _showDepartureAreaDialog(BuildContext context) {
     final controller = TextEditingController(text: _departureArea);
     showDialog<void>(
@@ -1261,13 +1484,33 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (dialogContext) {
         return AlertDialog(
           title: const Text('🚗 出発エリアの設定'),
-          content: TextField(
-            controller: controller,
-            decoration: const InputDecoration(
-              labelText: '出発地（市区町村や駅名など）',
-              hintText: '例: さいたま市 / 横浜市 / 名古屋市',
-              border: OutlineInputBorder(),
-            ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () async {
+                  Navigator.of(dialogContext).pop();
+                  await _fetchCurrentLocation(moveMap: true);
+                },
+                icon: const Icon(Icons.my_location, size: 18),
+                label: const Text('📍 現在地（GPS）を自動取得して設定'),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 42),
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text('または手動でエリアを入力:', style: TextStyle(fontSize: 12)),
+              const SizedBox(height: 6),
+              TextField(
+                controller: controller,
+                decoration: const InputDecoration(
+                  labelText: '出発地（市区町村や駅名）',
+                  hintText: '例: さいたま市 / 横浜市 / 世田谷区',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
           ),
           actions: [
             TextButton(
@@ -1288,62 +1531,5 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       },
     );
-  }
-}
-
-/// 1時間圏内・2時間圏内のドライブレーダーマップを描画するCustomPainter
-class _DriveRadarMapPainter extends CustomPainter {
-  final Offset center;
-  final double maxRadius;
-  final Color primaryColor;
-
-  _DriveRadarMapPainter({
-    required this.center,
-    required this.maxRadius,
-    required this.primaryColor,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final bgPaint = Paint()..color = const Color(0xFFF3F7F4);
-    canvas.drawRect(Offset.zero & size, bgPaint);
-
-    // 地図風の道路グリッド線
-    final gridPaint = Paint()
-      ..color = Colors.teal.withValues(alpha: 0.08)
-      ..strokeWidth = 1.0;
-    for (double x = 0; x < size.width; x += 40) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
-    }
-    for (double y = 0; y < size.height; y += 40) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
-    }
-
-    // 外円（車で2時間圏内）
-    final outerFill = Paint()
-      ..color = primaryColor.withValues(alpha: 0.06)
-      ..style = PaintingStyle.fill;
-    final outerStroke = Paint()
-      ..color = primaryColor.withValues(alpha: 0.3)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawCircle(center, maxRadius, outerFill);
-    canvas.drawCircle(center, maxRadius, outerStroke);
-
-    // 内円（車で1時間圏内）
-    final innerFill = Paint()
-      ..color = primaryColor.withValues(alpha: 0.09)
-      ..style = PaintingStyle.fill;
-    final innerStroke = Paint()
-      ..color = primaryColor.withValues(alpha: 0.45)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawCircle(center, maxRadius * 0.5, innerFill);
-    canvas.drawCircle(center, maxRadius * 0.5, innerStroke);
-  }
-
-  @override
-  bool shouldRepaint(covariant _DriveRadarMapPainter oldDelegate) {
-    return oldDelegate.center != center || oldDelegate.maxRadius != maxRadius;
   }
 }
