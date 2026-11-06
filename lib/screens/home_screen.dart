@@ -61,6 +61,12 @@ class _HomeScreenState extends State<HomeScreen> {
   /// ドライブ地図下部のスポット一覧スクロールコントローラ
   final ScrollController _mapSpotListScrollController = ScrollController();
 
+  /// メイン探索タブ（AI提案・検索）のスクロールコントローラ
+  final ScrollController _exploreScrollController = ScrollController();
+
+  /// トップに戻るボタンの表示フラグ
+  bool _showBackToTop = false;
+
   /// ドライブ地図下部のスポット一覧カードの表示・非表示フラグ
   bool _isMapListExpanded = true;
 
@@ -125,6 +131,15 @@ class _HomeScreenState extends State<HomeScreen> {
     _aiSummaryComment =
         '🎪 【${_selectedRegion.label}】直近の週末（$dateText）開催イベントや、定番お出かけスポットを表示しています！';
     _initCoupleSync();
+
+    // スクロール位置を監視して「トップに戻るボタン」の表示/非表示を切り替え
+    _exploreScrollController.addListener(() {
+      final show = _exploreScrollController.hasClients &&
+          _exploreScrollController.offset > 300;
+      if (show != _showBackToTop && mounted) {
+        setState(() => _showBackToTop = show);
+      }
+    });
 
     // 地域の週末天気を取得
     _fetchRegionWeather(_selectedRegion);
@@ -293,6 +308,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _searchController.dispose();
     _mapSearchController.dispose();
     _mapSpotListScrollController.dispose();
+    _exploreScrollController.dispose();
     _mapController?.dispose();
     super.dispose();
   }
@@ -911,6 +927,21 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+      floatingActionButton: (_currentTabIndex == 0 && _showBackToTop)
+          ? FloatingActionButton.small(
+              tooltip: 'トップに戻る',
+              backgroundColor: colorScheme.primaryContainer,
+              foregroundColor: colorScheme.onPrimaryContainer,
+              onPressed: () {
+                _exploreScrollController.animateTo(
+                  0,
+                  duration: const Duration(milliseconds: 350),
+                  curve: Curves.easeOutCubic,
+                );
+              },
+              child: const Icon(Icons.arrow_upward),
+            )
+          : null,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentTabIndex,
         onDestinationSelected: (index) {
@@ -959,6 +990,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final dateRangeStr = GeminiOutingService.formatDateRange(_targetDateRange);
 
     return CustomScrollView(
+      controller: _exploreScrollController,
       slivers: [
         SliverToBoxAdapter(
           child: Padding(

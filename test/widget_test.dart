@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:weekend_outing/main.dart';
 import 'package:weekend_outing/services/gemini_service.dart';
 import 'package:weekend_outing/services/location_service.dart';
+import 'package:weekend_outing/services/sync_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -63,5 +64,17 @@ void main() {
     final driveMin = LocationService.estimateDriveMinutes(dist);
     expect(driveMin, greaterThan(25));
     expect(driveMin, lessThan(60));
+  });
+
+  test('夫婦共有用テキスト生成と合言葉保存のテスト', () async {
+    const room = 'tanaka-family';
+    await CoupleSyncService.saveRoomCode(room);
+    final loadedRoom = await CoupleSyncService.getRoomCode();
+    expect(loadedRoom, room);
+
+    final spots = GeminiOutingService.getInitialSpots().take(2).toList();
+    final text = CoupleSyncService.exportFavoritesShareText(spots, room);
+    expect(text.contains('夫婦の行きたいスポット一覧'), isTrue);
+    expect(text.contains(room), isTrue);
   });
 }

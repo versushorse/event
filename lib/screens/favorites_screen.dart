@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/outing_spot.dart';
+import '../services/sync_service.dart';
 
 class FavoritesScreen extends StatefulWidget {
   final List<OutingSpot> favoriteSpots;
@@ -115,6 +116,26 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                     tooltip: '今すぐ同期',
                     onPressed: widget.onTriggerSync,
                     icon: const Icon(Icons.sync, size: 18),
+                  ),
+                  IconButton(
+                    tooltip: 'LINE等で共有',
+                    onPressed: () {
+                      final shareText =
+                          CoupleSyncService.exportFavoritesShareText(
+                        widget.favoriteSpots,
+                        widget.coupleRoomCode,
+                      );
+                      Clipboard.setData(ClipboardData(text: shareText));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            '📋 お気に入り一覧をコピーしました！LINEやメッセージに貼り付けて共有できます',
+                          ),
+                          duration: Duration(seconds: 3),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.share, size: 18),
                   ),
                   IconButton(
                     tooltip: '合言葉を変更',
@@ -514,8 +535,30 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 controller: controller,
                 decoration: const InputDecoration(
                   labelText: '家族ルーム合言葉',
-                  hintText: '例: tanaka-family',
+                  hintText: '例: family-weekend',
                   border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.cloud_done_outlined,
+                        size: 20, color: Colors.blue.shade800),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'クラウド自動同期エンジンが稼働中です。相手のスマホでも同じ合言葉を入力して「今すぐ同期」を押してください。',
+                        style: TextStyle(
+                            fontSize: 11, color: Colors.blue.shade900),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
