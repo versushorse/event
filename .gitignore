@@ -49,3 +49,5 @@ app.*.map.json
 .env.*
 **/local.properties
 lib/config/api_keys.local.dart
+*-firebase-adminsdk-*.json
+firebase-credentials.json
