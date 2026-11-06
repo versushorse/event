@@ -1,7 +1,8 @@
-// アプリ全体の基本動作を確認するウィジェットテスト
+// アプリ全体の基本動作・東北地域タブ・直近週末計算を確認するテスト
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:weekend_outing/main.dart';
+import 'package:weekend_outing/services/gemini_service.dart';
 import 'package:weekend_outing/services/location_service.dart';
 
 void main() {
@@ -11,19 +12,36 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('週末お出かけナビのホーム画面とタブが表示されるかテスト',
+  testWidgets('週末お出かけナビのホーム画面・東北6県タブ・ジャンルボタンが表示されるかテスト',
       (WidgetTester tester) async {
     await tester.pumpWidget(const WeekendOutingApp());
     await tester.pumpAndSettle();
 
-    // アプリタイトルと初期スポットが表示されていることを確認
+    // アプリタイトルと東北地域タブ・ジャンルボタンが表示されていることを確認
     expect(find.text('週末どこ行く？AIナビ'), findsOneWidget);
-    expect(find.text('秋の味覚収穫祭＆キッチンカーマルシェ'), findsOneWidget);
+    expect(find.text('宮城県'), findsWidgets);
+    expect(find.text('山形県'), findsWidgets);
+    expect(find.text('岩手県'), findsWidgets);
+    expect(find.text('期間限定イベント'), findsWidgets);
+    expect(find.text('グルメ・マルシェ'), findsWidgets);
+    expect(find.text('温泉・日帰り銭湯'), findsWidgets);
 
     // 下部ナビゲーションの3つのタブが表示されていることを確認
     expect(find.text('AI提案・検索'), findsOneWidget);
     expect(find.text('ドライブ地図'), findsOneWidget);
     expect(find.text('夫婦の行きたい！'), findsOneWidget);
+  });
+
+  test('直近の週末（11/9月曜日に調べたら11/14土〜11/15日）の自動算出テスト', () {
+    final mondayNov9 = DateTime(2026, 11, 9);
+    final weekendRange = GeminiOutingService.getUpcomingWeekendRange(mondayNov9);
+
+    expect(weekendRange.start, DateTime(2026, 11, 14));
+    expect(weekendRange.end, DateTime(2026, 11, 15));
+    expect(
+      GeminiOutingService.formatDateRange(weekendRange),
+      '11/14(土)〜11/15(日)',
+    );
   });
 
   test('距離計算と車での所要時間推定の単体テスト', () {

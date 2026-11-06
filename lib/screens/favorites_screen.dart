@@ -1,6 +1,7 @@
 // 夫婦間で共有する「ここ行きたい！」リアルタイム同期お気に入りリスト画面
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/outing_spot.dart';
 
 class FavoritesScreen extends StatefulWidget {
@@ -95,11 +96,14 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                               ),
                             ),
                             const SizedBox(width: 5),
-                            Text(
-                              '合言葉: ${widget.coupleRoomCode}（同期: ${widget.syncStatusLabel}）',
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                color: colorScheme.onSurfaceVariant,
+                            Expanded(
+                              child: Text(
+                                '合言葉: ${widget.coupleRoomCode}（同期: ${widget.syncStatusLabel}）',
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
                               ),
                             ),
                           ],
@@ -222,46 +226,54 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             children: [
               // 夫婦ステータスバッジ ＆ 削除ボタン
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: pick == PartnerPick.both
-                          ? Colors.pink.shade50
-                          : colorScheme.secondaryContainer,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: pick == PartnerPick.both
-                            ? Colors.pink.shade200
-                            : Colors.transparent,
-                      ),
-                    ),
-                    child: Text(
-                      '${pick.icon} ${pick.label}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: pick == PartnerPick.both
-                            ? Colors.pink.shade800
-                            : colorScheme.onSecondaryContainer,
-                      ),
+                  Expanded(
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: pick == PartnerPick.both
+                                ? Colors.pink.shade50
+                                : colorScheme.secondaryContainer,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: pick == PartnerPick.both
+                                  ? Colors.pink.shade200
+                                  : Colors.transparent,
+                            ),
+                          ),
+                          child: Text(
+                            '${pick.icon} ${pick.label}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: pick == PartnerPick.both
+                                  ? Colors.pink.shade800
+                                  : colorScheme.onSecondaryContainer,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: colorScheme.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '${spot.category.icon} ${spot.category.label}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '${spot.category.icon} ${spot.category.label}',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                  const Spacer(),
                   IconButton(
                     tooltip: '候補から外す',
                     onPressed: () => widget.onRemoveFavorite(spot),
@@ -342,6 +354,32 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 ),
               ),
               const SizedBox(height: 10),
+
+              // 公式サイト・元記事リンクボタン
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final uri = Uri.parse(spot.officialWebUrl);
+                      if (await canLaunchUrl(uri)) {
+                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                      }
+                    },
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      foregroundColor: colorScheme.primary,
+                      side: BorderSide(color: colorScheme.primary.withValues(alpha: 0.5)),
+                    ),
+                    icon: const Icon(Icons.open_in_new, size: 16),
+                    label: Text(
+                      spot.url.isNotEmpty ? '🌐 公式・元記事を見る（外部ブラウザ）' : '🔍 Webで最新情報を検索',
+                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              ),
 
               // LINE共有＆ステータス変更ボタン
               Row(

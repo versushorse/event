@@ -1,26 +1,55 @@
 // お出かけスポット・イベントのデータモデル定義
 
-/// スポットの種別（直近のイベント or 大型公園・自然 or 観光・道の駅）
+/// 東北6県の地域タブ定義
+enum TohokuRegion {
+  miyagi('宮城県', '📍', 'ar0204', 38.2682, 140.8694),
+  yamagata('山形県', '🍒', 'ar0206', 38.2404, 140.3633),
+  iwate('岩手県', '⛰️', 'ar0203', 39.7036, 141.1527),
+  fukushima('福島県', '🍑', 'ar0207', 37.7503, 140.4676),
+  akita('秋田県', '🌾', 'ar0205', 39.7186, 140.1024),
+  aomori('青森県', '🍎', 'ar0202', 40.8244, 140.7400);
+
+  final String label;
+  final String icon;
+  final String walkerplusCode;
+  final double centerLat;
+  final double centerLng;
+
+  const TohokuRegion(
+    this.label,
+    this.icon,
+    this.walkerplusCode,
+    this.centerLat,
+    this.centerLng,
+  );
+}
+
+/// スポットのジャンル（ユーザー指定の優先順）
 enum SpotCategory {
-  event('直近のイベント', '🎪'),
-  park('大型公園・自然', '🌳'),
-  sightseeing('観光・道の駅', '🚗');
+  event('期間限定イベント', '🎪'),
+  gourmet('グルメ・マルシェ', '🍠'),
+  park('大きな公園（小学生）', '🏃'),
+  onsen('温泉・日帰り銭湯', '♨️'),
+  indoor('屋内スポット', '🏛️'),
+  smallPark('小さな公園', '🌳'),
+  sightseeing('神社仏閣', '⛩️');
 
   final String label;
   final String icon;
   const SpotCategory(this.label, this.icon);
 }
 
-/// イベント・スポットのタイプ別タグ（食べる系・子供年齢別・駐車場など）
+/// イベント・スポットのタイプ別タグ（小学生向け・グルメ・駐車場など）
 enum SpotTag {
-  food('食べる系・グルメ', '🍔'),
-  baby('0〜2歳向け（授乳室/平坦）', '👶'),
-  toddler('3〜5歳（幼児遊具）', '👦'),
-  kids('6歳〜（大型アスレチック）', '🏃'),
-  nature('自然・広大な芝生', '🌿'),
+  food('グルメ・マルシェ', '🍠'),
+  kids('小学生・アスレチック', '🏃'),
+  onsen('温泉・露天風呂・サウナ', '♨️'),
+  nature('自然・広大な広場', '🌿'),
+  indoor('屋内・雨でもOK', '🏛️'),
   freeParking('無料駐車場あり', '🅿️'),
-  indoor('雨でもOK（屋内）', '☔'),
-  freeEntry('入場無料・コスパ◎', '🆓');
+  freeEntry('入場無料・コスパ◎', '🆓'),
+  toddler('体験・アクティビティ', '🎠'),
+  baby('散策・食べ歩き', '🚶');
 
   final String label;
   final String icon;
@@ -92,6 +121,9 @@ class OutingSpot {
   /// 情報の出所（例: '公式Web / Gemini AI検索'）
   final String sourceInfo;
 
+  /// 公式サイトや元記事のWebリンクURL
+  final String url;
+
   /// 夫婦のお気に入り登録状態
   final bool isFavorite;
 
@@ -118,6 +150,7 @@ class OutingSpot {
     required this.longitude,
     this.weatherText = '☀️ 晴れ 21℃/12℃',
     this.sourceInfo = 'Gemini AI ＆ Web最新イベント情報',
+    this.url = '',
     this.isFavorite = false,
     this.pickedBy,
     this.coupleNote = '',
@@ -136,6 +169,15 @@ class OutingSpot {
     return '車で約$hours時間$mins分';
   }
 
+  /// 公式サイトまたは元記事を開くためのURL（未指定の場合はGoogle検索を開く）
+  String get officialWebUrl {
+    if (url.isNotEmpty && url.startsWith('http')) {
+      return url;
+    }
+    final query = Uri.encodeComponent('$title $address 公式');
+    return 'https://www.google.com/search?q=$query';
+  }
+
   /// Googleマップで場所・ルートを検索するためのURLを生成する
   String get googleMapsUrl {
     final query = Uri.encodeComponent('$title $address');
@@ -147,13 +189,14 @@ class OutingSpot {
     final tagText = tags.map((t) => '#${t.label}').join(' ');
     final points = recommendPoints.map((p) => '・$p').join('\n');
     final notePart = coupleNote.isNotEmpty ? '\n💬 夫婦メモ: $coupleNote\n' : '';
+    final urlPart = url.isNotEmpty ? '\n🌐 公式/元記事: $url\n' : '';
     return '【週末お出かけ候補】${category.icon} $title\n'
         '📍 開催場所: $address\n'
         '🚗 $driveTimeLabel（約${distanceKm.toStringAsFixed(0)}km）\n'
         '📅 $scheduleText\n'
         '🅿️ $parkingInfo\n'
         '🌤️ 天気予報: $weatherText\n'
-        '$tagText$notePart\n\n'
+        '$tagText$notePart$urlPart\n'
         '✨ おすすめポイント\n$points\n\n'
         '💡 ドライブアドバイス: $aiTip\n\n'
         '🗺️ Googleマップ: $googleMapsUrl';
@@ -177,6 +220,7 @@ class OutingSpot {
     double? longitude,
     String? weatherText,
     String? sourceInfo,
+    String? url,
     bool? isFavorite,
     PartnerPick? pickedBy,
     String? coupleNote,
@@ -198,6 +242,7 @@ class OutingSpot {
       longitude: longitude ?? this.longitude,
       weatherText: weatherText ?? this.weatherText,
       sourceInfo: sourceInfo ?? this.sourceInfo,
+      url: url ?? this.url,
       isFavorite: isFavorite ?? this.isFavorite,
       pickedBy: pickedBy ?? this.pickedBy,
       coupleNote: coupleNote ?? this.coupleNote,
@@ -223,6 +268,7 @@ class OutingSpot {
       'longitude': longitude,
       'weatherText': weatherText,
       'sourceInfo': sourceInfo,
+      'url': url,
       'isFavorite': isFavorite,
       'pickedBy': pickedBy?.name,
       'coupleNote': coupleNote,
@@ -263,6 +309,7 @@ class OutingSpot {
       longitude: (json['longitude'] as num?)?.toDouble() ?? 139.6917,
       weatherText: json['weatherText'] as String? ?? '☀️ 晴れ 21℃/12℃',
       sourceInfo: json['sourceInfo'] as String? ?? '最新イベント情報',
+      url: json['url'] as String? ?? '',
       isFavorite: json['isFavorite'] as bool? ?? false,
       pickedBy: PartnerPick.fromKey(json['pickedBy'] as String?),
       coupleNote: json['coupleNote'] as String? ?? '',

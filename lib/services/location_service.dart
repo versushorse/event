@@ -17,7 +17,39 @@ class LocationResult {
 }
 
 class LocationService {
-  /// 現在位置（GPS）を取得する
+  /// 端末が直近にキャッシュしている位置情報を瞬時（ミリ秒）に取得
+  static Future<LocationResult?> getLastKnownLocation() async {
+    if (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')) {
+      return null;
+    }
+
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return null;
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) return null;
+      }
+      if (permission == LocationPermission.deniedForever) return null;
+
+      final position = await Geolocator.getLastKnownPosition();
+      if (position != null) {
+        final label = _guessAreaName(position.latitude, position.longitude);
+        return LocationResult(
+          latitude: position.latitude,
+          longitude: position.longitude,
+          label: label,
+        );
+      }
+    } catch (e) {
+      debugPrint('[LocationService] キャッシュ位置取得スキップ: $e');
+    }
+    return null;
+  }
+
+  /// 現在位置（GPS）を高精度で取得する
   static Future<LocationResult?> getCurrentLocation() async {
     // ユニットテスト/ウィジェットテスト環境ではネイティブGPSを呼び出さず安全にスキップ
     if (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')) {
@@ -47,11 +79,11 @@ class LocationService {
         return null;
       }
 
-      // 3. 現在地を取得
+      // 3. 現在地を取得（高精度、タイムアウト6秒）
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 10),
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 6),
         ),
       );
 
@@ -64,14 +96,31 @@ class LocationService {
       );
     } catch (e) {
       debugPrint('[LocationService] 現在地取得エラー: $e');
+      // 高精度取得でタイムアウトや失敗した場合、直近のキャッシュ位置があればそれを返す
+      try {
+        final lastKnown = await Geolocator.getLastKnownPosition();
+        if (lastKnown != null) {
+          return LocationResult(
+            latitude: lastKnown.latitude,
+            longitude: lastKnown.longitude,
+            label: _guessAreaName(lastKnown.latitude, lastKnown.longitude),
+          );
+        }
+      } catch (_) {}
       return null;
     }
   }
 
   /// 緯度経度からおおよそのエリア名を推定（逆ジオコーディングの軽量フォールバック）
   static String _guessAreaName(double lat, double lng) {
-    // 東京23区・多摩・神奈川・埼玉・千葉のおおよその判定
-    if (lat >= 35.65 && lat <= 35.75 && lng >= 139.65 && lng <= 139.80) {
+    // 東北・宮城
+    if (lat >= 38.20 && lat <= 38.50 && lng >= 140.70 && lng <= 141.10) {
+      return '宮城・仙台・泉エリア';
+    } else if (lat >= 37.80 && lat <= 39.00 && lng >= 140.00 && lng <= 141.50) {
+      return '宮城・東北エリア';
+    }
+    // 関東
+    else if (lat >= 35.65 && lat <= 35.75 && lng >= 139.65 && lng <= 139.80) {
       return '東京都心周辺';
     } else if (lat >= 35.55 && lat < 35.65 && lng >= 139.55 && lng <= 139.75) {
       return '城南・川崎エリア';
@@ -83,6 +132,20 @@ class LocationService {
       return '埼玉南・さいたまエリア';
     } else if (lat >= 35.55 && lat <= 35.75 && lng >= 139.85 && lng <= 140.20) {
       return '千葉西・湾岸エリア';
+    }
+    // 中部・関西・その他主要都市
+    else if (lat >= 35.00 && lat <= 35.30 && lng >= 136.80 && lng <= 137.10) {
+      return '愛知・名古屋エリア';
+    } else if (lat >= 34.60 && lat <= 34.85 && lng >= 135.40 && lng <= 135.65) {
+      return '大阪エリア';
+    } else if (lat >= 34.95 && lat <= 35.10 && lng >= 135.70 && lng <= 135.85) {
+      return '京都エリア';
+    } else if (lat >= 34.65 && lat <= 34.75 && lng >= 135.15 && lng <= 135.30) {
+      return '兵庫・神戸エリア';
+    } else if (lat >= 33.50 && lat <= 33.70 && lng >= 130.30 && lng <= 130.50) {
+      return '福岡エリア';
+    } else if (lat >= 43.00 && lat <= 43.15 && lng >= 141.25 && lng <= 141.45) {
+      return '北海道・札幌エリア';
     }
     return '現在地（GPS）';
   }
