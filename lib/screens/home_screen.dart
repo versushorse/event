@@ -361,22 +361,22 @@ class _HomeScreenState extends State<HomeScreen> {
     _triggerCloudSync();
   }
 
-  /// クラウド同期を実行する
+  /// クラウド同期を実行する（相手の最新変更を受信・マージ）
   Future<void> _triggerCloudSync() async {
     setState(() => _syncStatusLabel = '同期中...');
     final localFavs = _favoriteSpots;
-    final merged = await CoupleSyncService.syncWithCloud(
+    final pulled = await CoupleSyncService.pullFromCloud(
       roomCode: _coupleRoomCode,
-      localFavorites: localFavs,
+      currentLocal: localFavs,
     );
 
     if (!mounted) return;
-    if (merged != null) {
-      final mergedIds = merged.map((s) => s.id).toSet();
+    if (pulled != null) {
+      final pulledIds = pulled.map((s) => s.id).toSet();
       setState(() {
         _allSpots = _allSpots.map((spot) {
-          if (mergedIds.contains(spot.id)) {
-            final cloudSpot = merged.firstWhere((s) => s.id == spot.id);
+          if (pulledIds.contains(spot.id)) {
+            final cloudSpot = pulled.firstWhere((s) => s.id == spot.id);
             return spot.copyWith(
               isFavorite: true,
               pickedBy: cloudSpot.pickedBy,
@@ -386,7 +386,7 @@ class _HomeScreenState extends State<HomeScreen> {
             return spot.copyWith(isFavorite: false);
           }
         }).toList();
-        for (final cloudSpot in merged) {
+        for (final cloudSpot in pulled) {
           if (!_allSpots.any((s) => s.id == cloudSpot.id)) {
             _allSpots.add(cloudSpot.copyWith(isFavorite: true));
           }
@@ -792,8 +792,14 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
 
-    await CoupleSyncService.saveLocalFavorites(_favoriteSpots);
-    _triggerCloudSync();
+    await CoupleSyncService.pushToCloud(
+      roomCode: _coupleRoomCode,
+      favorites: _favoriteSpots,
+    );
+    final lastSync = await CoupleSyncService.getLastSyncLabel();
+    if (mounted) {
+      setState(() => _syncStatusLabel = lastSync);
+    }
 
     final updated = _allSpots.firstWhere((s) => s.id == target.id);
     if (!mounted) return;
@@ -824,8 +830,14 @@ class _HomeScreenState extends State<HomeScreen> {
       }).toList();
     });
 
-    await CoupleSyncService.saveLocalFavorites(_favoriteSpots);
-    _triggerCloudSync();
+    await CoupleSyncService.pushToCloud(
+      roomCode: _coupleRoomCode,
+      favorites: _favoriteSpots,
+    );
+    final lastSync = await CoupleSyncService.getLastSyncLabel();
+    if (mounted) {
+      setState(() => _syncStatusLabel = lastSync);
+    }
   }
 
   /// 外部Googleマップアプリを起動してナビを開始する

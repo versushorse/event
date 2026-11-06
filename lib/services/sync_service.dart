@@ -10,6 +10,7 @@ class CoupleSyncService {
   static const String _prefRoomKey = 'couple_room_code';
   static const String _prefFavoritesKey = 'couple_favorites_json';
   static const String _prefLastSyncKey = 'couple_last_sync_time';
+  static const String _prefLocalUpdatedAtKey = 'couple_local_updated_at';
 
   /// 無料KVS（設定不要のキーバリューストア）のAppKey
   static const String _fallbackKvsAppKey = '2pbg4ppa';
@@ -50,188 +51,75 @@ class CoupleSyncService {
     }
   }
 
-  /// クラウド同期（同じ家族合言葉を持つ夫婦端末間でリアルタイム同期）
-  /// 1. Firebase Realtime Database（設定されている場合）
-  /// 2. 高速CDNトピック（ntfy.sh）＋ オープンKVS による確実な即時同期
-  static Future<List<OutingSpot>?> syncWithCloud({
+  /// 自分がハートを追加・削除・編集したときのクラウドプッシュ（上書き）
+  /// 古いクラウドデータで復活させないため、現在のリストで完全にクラウドを更新する
+  static Future<void> pushToCloud({
     required String roomCode,
-    required List<OutingSpot> localFavorites,
+    required List<OutingSpot> favorites,
   }) async {
     final sanitizedCode =
         roomCode.trim().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-    if (sanitizedCode.isEmpty) return null;
+    if (sanitizedCode.isEmpty) return;
 
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_prefLocalUpdatedAtKey, nowMs);
+    await prefs.setString(_prefLastSyncKey, DateTime.now().toIso8601String());
+    await saveLocalFavorites(favorites);
+
+    final payload = {
+      'v': 1,
+      'timestamp': nowMs,
+      'spots': favorites.map((s) => s.toJson()).toList(),
+    };
+    final jsonStr = jsonEncode(payload);
+
+    // 1. Firebaseが設定されている場合
     final firebaseBaseUrl = AppApiKeys.firebaseRealtimeDbUrl.trim();
     if (firebaseBaseUrl.isNotEmpty) {
-      return _syncWithFirebase(
-        baseUrl: firebaseBaseUrl,
-        roomCode: sanitizedCode,
-        localFavorites: localFavorites,
-      );
-    } else {
-      return _syncWithFastCdnAndKvs(
-        roomCode: sanitizedCode,
-        localFavorites: localFavorites,
-      );
-    }
-  }
-
-  /// 1. Firebase Realtime Database による高速・永続同期
-  static Future<List<OutingSpot>?> _syncWithFirebase({
-    required String baseUrl,
-    required String roomCode,
-    required List<OutingSpot> localFavorites,
-  }) async {
-    try {
-      final cleanBaseUrl = baseUrl.endsWith('/')
-          ? baseUrl.substring(0, baseUrl.length - 1)
-          : baseUrl;
-      final endpoint = Uri.parse('$cleanBaseUrl/rooms/$roomCode.json');
-
-      final getRes =
-          await http.get(endpoint).timeout(const Duration(seconds: 10));
-      List<OutingSpot> cloudList = [];
-      if (getRes.statusCode == 200 &&
-          getRes.body.isNotEmpty &&
-          getRes.body != 'null') {
-        try {
-          final decoded = jsonDecode(getRes.body);
-          if (decoded is List) {
-            cloudList = decoded
-                .map(
-                    (item) => OutingSpot.fromJson(item as Map<String, dynamic>))
-                .toList();
-          }
-        } catch (e) {
-          debugPrint('Firebaseパースエラー: $e');
-        }
+      try {
+        final cleanBaseUrl = firebaseBaseUrl.endsWith('/')
+            ? firebaseBaseUrl.substring(0, firebaseBaseUrl.length - 1)
+            : firebaseBaseUrl;
+        final endpoint = Uri.parse('$cleanBaseUrl/rooms/$sanitizedCode.json');
+        await http
+            .put(
+              endpoint,
+              headers: {'Content-Type': 'application/json'},
+              body: jsonStr,
+            )
+            .timeout(const Duration(seconds: 8));
+      } catch (e) {
+        debugPrint('Firebaseプッシュエラー: $e');
       }
-
-      final mergedMap = <String, OutingSpot>{};
-      for (final spot in cloudList) {
-        mergedMap[spot.id] = spot;
-      }
-      for (final spot in localFavorites) {
-        mergedMap[spot.id] = spot;
-      }
-
-      final mergedList = mergedMap.values.toList();
-
-      final postBody = jsonEncode(mergedList.map((s) => s.toJson()).toList());
-      await http
-          .put(
-            endpoint,
-            headers: {'Content-Type': 'application/json'},
-            body: postBody,
-          )
-          .timeout(const Duration(seconds: 10));
-
-      await saveLocalFavorites(mergedList);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefLastSyncKey, DateTime.now().toIso8601String());
-
-      return mergedList;
-    } catch (e) {
-      debugPrint('Firebase同期エラー: $e');
-      return null;
-    }
-  }
-
-  /// 2. 高速CDN即時通信 ＋ オープンKVS による即座の同期
-  static Future<List<OutingSpot>?> _syncWithFastCdnAndKvs({
-    required String roomCode,
-    required List<OutingSpot> localFavorites,
-  }) async {
-    final mergedMap = <String, OutingSpot>{};
-    for (final spot in localFavorites) {
-      mergedMap[spot.id] = spot;
+      return;
     }
 
-    final cdnTopic = 'weekend_outing_couple_$roomCode';
-    final cdnPollUrl = Uri.parse('https://ntfy.sh/$cdnTopic/json?poll=1');
-
-    // A. 高速CDNから最新メッセージ（ハート候補）をフェッチ
-    try {
-      final cdnRes =
-          await http.get(cdnPollUrl).timeout(const Duration(seconds: 4));
-      if (cdnRes.statusCode == 200 && cdnRes.body.isNotEmpty) {
-        final lines = cdnRes.body.split('\n');
-        for (final line in lines.reversed) {
-          final trimmed = line.trim();
-          if (trimmed.isEmpty) continue;
-          try {
-            final obj = jsonDecode(trimmed) as Map<String, dynamic>;
-            if (obj['event'] == 'message' && obj['message'] != null) {
-              final msgStr = obj['message'] as String;
-              final spotListRaw = jsonDecode(msgStr) as List<dynamic>;
-              for (final raw in spotListRaw) {
-                final spot = OutingSpot.fromJson(raw as Map<String, dynamic>);
-                mergedMap[spot.id] = spot;
-              }
-              break; // 最新の1件でOK
-            }
-          } catch (_) {}
-        }
-      }
-    } catch (e) {
-      debugPrint('CDNフェッチ注意: $e');
-    }
-
-    // B. オープンKVSからもフェッチ（タイムアウト10秒に緩和）
-    try {
-      final kvsKey = 'room_$roomCode';
-      final getUrl = Uri.parse(
-          'https://keyvalue.immanuel.co/api/KeyVal/GetValue/$_fallbackKvsAppKey/$kvsKey');
-      final getRes =
-          await http.get(getUrl).timeout(const Duration(seconds: 8));
-      if (getRes.statusCode == 200 && getRes.body.isNotEmpty) {
-        final rawVal = getRes.body.trim().replaceAll('"', '');
-        if (rawVal.isNotEmpty && rawVal != 'null') {
-          try {
-            final jsonStr = _decodeBase64Url(rawVal);
-            final decoded = jsonDecode(jsonStr) as List<dynamic>;
-            for (final item in decoded) {
-              final spot =
-                  _fromCompactJson(item as Map<String, dynamic>);
-              if (!mergedMap.containsKey(spot.id)) {
-                mergedMap[spot.id] = spot;
-              }
-            }
-          } catch (e) {
-            debugPrint('オープンKVSデコードエラー: $e');
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('オープンKVS取得注意: $e');
-    }
-
-    final mergedList = mergedMap.values.toList();
-
-    // C. 高速CDNに最新のお気に入りリストを配信（相手のスマホへ即座にプッシュ）
+    // 2. 高速CDN（ntfy.sh）へプッシュ（相手のスマホへ即座に送信）
+    final cdnTopic = 'weekend_outing_couple_$sanitizedCode';
     try {
       final cdnPostUrl = Uri.parse('https://ntfy.sh/$cdnTopic');
-      final cdnBody =
-          jsonEncode(mergedList.map((s) => s.toJson()).toList());
       await http
           .post(
             cdnPostUrl,
             headers: {'Title': 'CoupleFavoritesSync'},
-            body: cdnBody,
+            body: jsonStr,
           )
           .timeout(const Duration(seconds: 4));
     } catch (e) {
-      debugPrint('CDN送信注意: $e');
+      debugPrint('CDNプッシュ注意: $e');
     }
 
-    // D. オープンKVSへも非同期で保存
+    // 3. オープンKVSへも保存（タイムアウト対策付き）
     try {
-      final kvsKey = 'room_$roomCode';
-      final compactList = mergedList
-          .take(20)
-          .map((s) => _toCompactJson(s))
-          .toList();
-      final compactJsonStr = jsonEncode(compactList);
+      final kvsKey = 'room_$sanitizedCode';
+      final compactList =
+          favorites.take(20).map((s) => _toCompactJson(s)).toList();
+      final compactPayload = {
+        'ts': nowMs,
+        'sp': compactList,
+      };
+      final compactJsonStr = jsonEncode(compactPayload);
       final b64 = _encodeBase64Url(compactJsonStr);
 
       final updateUrl = Uri.parse(
@@ -241,14 +129,150 @@ class CoupleSyncService {
         headers: {'Content-Length': '0'},
       ).timeout(const Duration(seconds: 8));
     } catch (e) {
-      debugPrint('オープンKVS保存注意: $e');
+      debugPrint('オープンKVSプッシュ注意: $e');
+    }
+  }
+
+  /// 相手の最新変更を受信（Pull）してローカルにマージ・反映する
+  static Future<List<OutingSpot>?> pullFromCloud({
+    required String roomCode,
+    required List<OutingSpot> currentLocal,
+  }) async {
+    final sanitizedCode =
+        roomCode.trim().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    if (sanitizedCode.isEmpty) return null;
+
+    final prefs = await SharedPreferences.getInstance();
+    final localUpdatedAt = prefs.getInt(_prefLocalUpdatedAtKey) ?? 0;
+
+    int cloudTimestamp = 0;
+    List<OutingSpot>? cloudSpots;
+
+    // 1. FirebaseからPull
+    final firebaseBaseUrl = AppApiKeys.firebaseRealtimeDbUrl.trim();
+    if (firebaseBaseUrl.isNotEmpty) {
+      try {
+        final cleanBaseUrl = firebaseBaseUrl.endsWith('/')
+            ? firebaseBaseUrl.substring(0, firebaseBaseUrl.length - 1)
+            : firebaseBaseUrl;
+        final endpoint = Uri.parse('$cleanBaseUrl/rooms/$sanitizedCode.json');
+        final res =
+            await http.get(endpoint).timeout(const Duration(seconds: 8));
+        if (res.statusCode == 200 && res.body.isNotEmpty && res.body != 'null') {
+          final decoded = jsonDecode(res.body);
+          if (decoded is Map<String, dynamic>) {
+            cloudTimestamp = (decoded['timestamp'] as num?)?.toInt() ?? 0;
+            final rawSpots = decoded['spots'] as List<dynamic>? ?? [];
+            cloudSpots = rawSpots
+                .map((item) =>
+                    OutingSpot.fromJson(item as Map<String, dynamic>))
+                .toList();
+          } else if (decoded is List) {
+            cloudSpots = decoded
+                .map((item) =>
+                    OutingSpot.fromJson(item as Map<String, dynamic>))
+                .toList();
+          }
+        }
+      } catch (e) {
+        debugPrint('Firebase取得エラー: $e');
+      }
+    } else {
+      // 2. 高速CDN（ntfy.sh）からPull
+      final cdnTopic = 'weekend_outing_couple_$sanitizedCode';
+      final cdnPollUrl = Uri.parse('https://ntfy.sh/$cdnTopic/json?poll=1');
+      try {
+        final cdnRes =
+            await http.get(cdnPollUrl).timeout(const Duration(seconds: 4));
+        if (cdnRes.statusCode == 200 && cdnRes.body.isNotEmpty) {
+          final lines = cdnRes.body.split('\n');
+          for (final line in lines.reversed) {
+            final trimmed = line.trim();
+            if (trimmed.isEmpty) continue;
+            try {
+              final obj = jsonDecode(trimmed) as Map<String, dynamic>;
+              if (obj['event'] == 'message' && obj['message'] != null) {
+                final msgStr = obj['message'] as String;
+                final parsed = jsonDecode(msgStr);
+                if (parsed is Map<String, dynamic>) {
+                  cloudTimestamp = (parsed['timestamp'] as num?)?.toInt() ?? 0;
+                  final rawSpots = parsed['spots'] as List<dynamic>? ?? [];
+                  cloudSpots = rawSpots
+                      .map((item) => OutingSpot.fromJson(
+                          item as Map<String, dynamic>))
+                      .toList();
+                } else if (parsed is List) {
+                  cloudSpots = parsed
+                      .map((item) => OutingSpot.fromJson(
+                          item as Map<String, dynamic>))
+                      .toList();
+                }
+                break;
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (e) {
+        debugPrint('CDN取得注意: $e');
+      }
+
+      // 3. オープンKVSからも確認（CDNが空だった場合や予備）
+      if (cloudSpots == null) {
+        try {
+          final kvsKey = 'room_$sanitizedCode';
+          final getUrl = Uri.parse(
+              'https://keyvalue.immanuel.co/api/KeyVal/GetValue/$_fallbackKvsAppKey/$kvsKey');
+          final getRes =
+              await http.get(getUrl).timeout(const Duration(seconds: 8));
+          if (getRes.statusCode == 200 && getRes.body.isNotEmpty) {
+            final rawVal = getRes.body.trim().replaceAll('"', '');
+            if (rawVal.isNotEmpty && rawVal != 'null') {
+              try {
+                final jsonStr = _decodeBase64Url(rawVal);
+                final decoded = jsonDecode(jsonStr);
+                if (decoded is Map<String, dynamic>) {
+                  cloudTimestamp = (decoded['ts'] as num?)?.toInt() ?? 0;
+                  final rawList = decoded['sp'] as List<dynamic>? ?? [];
+                  cloudSpots = rawList
+                      .map((item) =>
+                          _fromCompactJson(item as Map<String, dynamic>))
+                      .toList();
+                } else if (decoded is List) {
+                  cloudSpots = decoded
+                      .map((item) =>
+                          _fromCompactJson(item as Map<String, dynamic>))
+                      .toList();
+                }
+              } catch (e) {
+                debugPrint('オープンKVSデコードエラー: $e');
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('オープンKVS取得注意: $e');
+        }
+      }
     }
 
-    await saveLocalFavorites(mergedList);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefLastSyncKey, DateTime.now().toIso8601String());
+    if (cloudSpots == null) {
+      // クラウドにまだ何もない場合はローカルをそのまま保持
+      return currentLocal;
+    }
 
-    return mergedList;
+    // タイムスタンプ判定:
+    // クラウドのほうが新しい、または同等の場合はクラウドの内容を採用（削除も反映される！）
+    // ローカルのほうが新しい場合はローカルを優先し、クラウドへ押し戻す
+    if (cloudTimestamp >= localUpdatedAt) {
+      await saveLocalFavorites(cloudSpots);
+      await prefs.setInt(_prefLocalUpdatedAtKey, cloudTimestamp);
+      await prefs.setString(
+          _prefLastSyncKey, DateTime.now().toIso8601String());
+      return cloudSpots;
+    } else {
+      // ローカルのほうが新しい操作をした状態なので、クラウドへプッシュ
+      await pushToCloud(roomCode: roomCode, favorites: currentLocal);
+      return currentLocal;
+    }
   }
 
   /// Base64Url エンコード
