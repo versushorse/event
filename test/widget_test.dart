@@ -2,6 +2,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:weekend_outing/main.dart';
+import 'package:weekend_outing/models/outing_spot.dart';
 import 'package:weekend_outing/services/gemini_service.dart';
 import 'package:weekend_outing/services/location_service.dart';
 import 'package:weekend_outing/services/sync_service.dart';
@@ -80,5 +81,75 @@ void main() {
     final text = CoupleSyncService.exportFavoritesShareText(spots, room);
     expect(text.contains('夫婦の行きたいスポット一覧'), isTrue);
     expect(text.contains(room), isTrue);
+  });
+
+  test('ファミリー・お祭り・公園優先スコアリングソートのテスト', () {
+    final hotelSpot = OutingSpot(
+      id: 'hotel_event',
+      title: '仙台ロイヤルパークホテル ガーデンシネマナイト',
+      subtitle: '芝生の上で映画を楽しむナイトタイムイベント',
+      category: SpotCategory.event,
+      tags: const [SpotTag.kids],
+      driveMinutes: 10, // 距離的には一番近い
+      distanceKm: 5.0,
+      scheduleText: '11/8開催',
+      parkingInfo: '駐車場あり',
+      recommendPoints: const ['夜間のガーデン映画'],
+      aiTip: '',
+      address: '仙台市泉区寺岡',
+      latitude: 38.34,
+      longitude: 140.83,
+      weatherText: '晴れ',
+      sourceInfo: 'テスト',
+      url: '',
+    );
+
+    final dinoSpot = OutingSpot(
+      id: 'dino_event',
+      title: '大恐竜パークみちのく公園',
+      subtitle: '小学生・子どもが大興奮！恐竜アドベンチャーフェス',
+      category: SpotCategory.event,
+      tags: const [SpotTag.kids, SpotTag.nature],
+      driveMinutes: 40, // 距離的には遠い
+      distanceKm: 30.0,
+      scheduleText: '11/7〜11/8開催',
+      parkingInfo: '無料駐車場あり',
+      recommendPoints: const ['恐竜体験フェスティバル'],
+      aiTip: '',
+      address: '宮城県柴田郡川崎町',
+      latitude: 38.21,
+      longitude: 140.67,
+      weatherText: '晴れ',
+      sourceInfo: 'テスト',
+      url: '',
+    );
+
+    final pikachuSpot = OutingSpot(
+      id: 'pikachu_event',
+      title: 'ピカチュウがやってくる！ポケモンキッズフェスタ',
+      subtitle: '小学生親子で参加できるクイズ＆スタンプラリー',
+      category: SpotCategory.event,
+      tags: const [SpotTag.kids],
+      driveMinutes: 25,
+      distanceKm: 15.0,
+      scheduleText: '11/8開催',
+      parkingInfo: '無料駐車場あり',
+      recommendPoints: const ['ポケモンふれあい体験'],
+      aiTip: '',
+      address: '利府町',
+      latitude: 38.33,
+      longitude: 140.97,
+      weatherText: '晴れ',
+      sourceInfo: 'テスト',
+      url: '',
+    );
+
+    final list = [hotelSpot, dinoSpot, pikachuSpot];
+    // GeminiOutingService内部の比較ロジックをテスト
+    // ピカチュウや恐竜が上位になり、ホテルシネマナイトが最下位になることを確認
+    final sorted = GeminiOutingService.sortSpotsForFamily(list);
+
+    expect(sorted.first.title.contains('ピカチュウ') || sorted.first.title.contains('恐竜'), isTrue);
+    expect(sorted.last.id, 'hotel_event'); // ホテルイベントは一番下位に回る
   });
 }

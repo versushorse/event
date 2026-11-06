@@ -434,6 +434,12 @@ class GeminiOutingService {
         ...liveGourmetEvents,
         ...placesGourmetSpots,
       ]);
+      combinedGourmet.sort((a, b) => _compareSpotsForFamily(
+            a,
+            b,
+            centerLat: searchCenterLat,
+            centerLng: searchCenterLng,
+          ));
 
       if (combinedGourmet.isNotEmpty) {
         if (apiKey.isNotEmpty) {
@@ -777,28 +783,137 @@ class GeminiOutingService {
       }
     }
 
-    // 地図中心検索の場合は地図中心から近い順、通常時は現在地から近い順にソート
-    if (searchCenterLat != null && searchCenterLng != null) {
-      deduplicated.sort((a, b) {
-        final da = LocationService.calculateDistanceKm(
-          startLat: searchCenterLat,
-          startLng: searchCenterLng,
-          endLat: a.latitude,
-          endLng: a.longitude,
-        );
-        final db = LocationService.calculateDistanceKm(
-          startLat: searchCenterLat,
-          startLng: searchCenterLng,
-          endLat: b.latitude,
-          endLng: b.longitude,
-        );
-        return da.compareTo(db);
-      });
-    } else {
-      deduplicated.sort((a, b) => a.driveMinutes.compareTo(b.driveMinutes));
-    }
+    // ファミリー向け適性スコア（お祭り・フェス・子ども向け・公園等）を最優先し、
+    // 同スコア内では現在地（または地図中心）からの所要時間・距離が近い順にソート！
+    deduplicated.sort((a, b) => _compareSpotsForFamily(
+          a,
+          b,
+          centerLat: searchCenterLat,
+          centerLng: searchCenterLng,
+        ));
 
     return deduplicated;
+  }
+
+  /// 小学生連れファミリー、お祭り・フェス、公園・体験を最優先するための適性スコア算出
+  static int _calculateFamilyEventScore(OutingSpot spot) {
+    int score = 0;
+    final text =
+        '${spot.title} ${spot.subtitle} ${spot.recommendPoints.join(" ")} ${spot.parkingInfo} ${spot.address}'
+            .toLowerCase();
+
+    // 1. 子ども・小学生・キャラクター・体験・遊び（最優先: +120点）
+    const kidsWords = [
+      'ポケモン', 'ピカチュウ', '恐竜', 'ダイナソー', 'アンパンマン', 'アニメ', 'キャラクター',
+      '小学生', '子ども', 'こども', 'キッズ', '親子', 'ファミリー',
+      'アスレチック', '体験', 'ワークショップ', '工作', 'クラフト', 'スタンプラリー',
+      'クイズ', 'おしごと', '実験', 'サイエンス', 'プラネタリウム', '水族館', '動物', 'ふれあい',
+      '遊具', 'トランポリン', 'すべり台', 'スライダー'
+    ];
+    for (final w in kidsWords) {
+      if (text.contains(w.toLowerCase())) {
+        score += 120;
+        break;
+      }
+    }
+
+    // 2. お祭り・フェス・マルシェ・収穫祭（高得点: +100点）
+    const festivalWords = [
+      '祭り', 'まつり', 'フェス', 'フェスティバル', 'マルシェ', '収穫祭', 'マーケット',
+      '市', 'フリマ', 'バザー', '縁日', '花火', '物産展', 'フェア', '味覚', 'キャンペーン'
+    ];
+    for (final w in festivalWords) {
+      if (text.contains(w.toLowerCase())) {
+        score += 100;
+        break;
+      }
+    }
+
+    // 3. 公園・広場・自然（高得点: +80点）
+    const parkWords = [
+      '公園', '広場', '国営', '県民の森', '森林', '自然公園', '芝生', '緑地',
+      'キャンプ', 'アウトドア', '湖畔'
+    ];
+    for (final w in parkWords) {
+      if (text.contains(w.toLowerCase())) {
+        score += 80;
+        break;
+      }
+    }
+
+    // 4. 無料駐車場・入場無料（便利度加点: +30点）
+    if (spot.tags.contains(SpotTag.freeParking) || text.contains('無料駐車場')) {
+      score += 30;
+    }
+    if (spot.tags.contains(SpotTag.freeEntry) ||
+        text.contains('無料') ||
+        text.contains('入場無料')) {
+      score += 30;
+    }
+
+    // 5. ホテル催事・夜間・大人向け・アフタヌーンティー（減点: -150点）
+    const adultWords = [
+      'ホテル', 'ロイヤルパーク', 'アフタヌーンティー', 'シネマナイト', 'ナイトタイム',
+      'ディナー', 'バー', '宿泊', 'ブライダル', '結婚式', '大人'
+    ];
+    for (final w in adultWords) {
+      if (text.contains(w.toLowerCase())) {
+        score -= 150;
+        break;
+      }
+    }
+
+    return score;
+  }
+
+  /// ファミリー適性スコアと所要時間によるスポット比較（スコア高優先 → 近い順）
+  static int _compareSpotsForFamily(
+    OutingSpot a,
+    OutingSpot b, {
+    double? centerLat,
+    double? centerLng,
+  }) {
+    final scoreA = _calculateFamilyEventScore(a);
+    final scoreB = _calculateFamilyEventScore(b);
+
+    // スコア差がある場合はスコアが高い方を優先
+    if (scoreA != scoreB) {
+      return scoreB.compareTo(scoreA);
+    }
+
+    // スコアが同等の場合は距離・所要時間が近い順
+    if (centerLat != null && centerLng != null) {
+      final da = LocationService.calculateDistanceKm(
+        startLat: centerLat,
+        startLng: centerLng,
+        endLat: a.latitude,
+        endLng: a.longitude,
+      );
+      final db = LocationService.calculateDistanceKm(
+        startLat: centerLat,
+        startLng: centerLng,
+        endLat: b.latitude,
+        endLng: b.longitude,
+      );
+      return da.compareTo(db);
+    }
+    return a.driveMinutes.compareTo(b.driveMinutes);
+  }
+
+  /// スポット一覧をファミリー向け適性スコア順（お祭り・フェス・子ども向け優先）にソートする
+  static List<OutingSpot> sortSpotsForFamily(
+    List<OutingSpot> spots, {
+    double? centerLat,
+    double? centerLng,
+  }) {
+    final copy = List<OutingSpot>.from(spots);
+    copy.sort((a, b) => _compareSpotsForFamily(
+          a,
+          b,
+          centerLat: centerLat,
+          centerLng: centerLng,
+        ));
+    return copy;
   }
 
   /// イベントの開催期間テキストが指定された `targetDateRange`（開始日〜終了日）に開催中かどうかを判定する
