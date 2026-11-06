@@ -25,7 +25,11 @@ void main() {
     expect(find.text('岩手県'), findsWidgets);
     expect(find.text('期間限定イベント'), findsWidgets);
     expect(find.text('グルメ・マルシェ'), findsWidgets);
+    expect(find.text('地元グルメ・食事処'), findsWidgets);
     expect(find.text('温泉・日帰り銭湯'), findsWidgets);
+
+    // 夫婦の好みAIナビが表示されていることを確認
+    expect(find.text('夫婦の好みAIナビ'), findsOneWidget);
 
     // 下部ナビゲーションの3つのタブが表示されていることを確認
     expect(find.text('AI提案・検索'), findsOneWidget);

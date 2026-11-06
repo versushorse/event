@@ -288,6 +288,36 @@ class GeminiOutingService {
         url: 'http://www.oosaki-hachiman.or.jp/',
         isFavorite: false,
       ),
+
+      // 8. 地元グルメ・食事処（定義とうふ店）
+      OutingSpot(
+        id: 'dining_jogi_tofu',
+        title: '定義とうふ店（名物 三角定義あぶらあげ）',
+        subtitle: '定義如来の門前で揚げたてアツアツ！外はサクッ中はフワフワの宮城屈指の名物グルメ',
+        category: SpotCategory.dining,
+        tags: const [
+          SpotTag.food,
+          SpotTag.freeParking,
+          SpotTag.kids,
+        ],
+        driveMinutes: 45,
+        distanceKm: 27.8,
+        scheduleText: '営業時間: 9:00〜16:00（年中無休）',
+        parkingInfo: '定義如来門前駐車場・大駐車場あり（無料・約300台）',
+        recommendPoints: const [
+          '揚げたて熱々の油揚げに醤油とにんにく七味をかけて食べる名物は絶品！子どもも大喜び',
+          '豆乳や焼きめし、田楽などドライブ途中の小腹満たしやランチに最高のローカル食事処',
+          '定義山西方寺の参拝とセットで立ち寄れる定番の家族ドライブコース',
+        ],
+        aiTip: '休日の昼時は行列ができますが回転が早いです。隣の休憩ベンチで座ってゆっくり食べられます。',
+        address: '宮城県仙台市青葉区大倉字下道1-2',
+        latitude: 38.3639,
+        longitude: 140.6722,
+        weatherText: '☀️ ドライブ日和',
+        sourceInfo: '定義観光協会・食べログ百名店',
+        url: 'https://sankaku-tofu.jp/',
+        isFavorite: false,
+      ),
     ];
   }
 
@@ -552,6 +582,23 @@ class GeminiOutingService {
         cleanQuery.contains('東照宮') ||
         cleanQuery.contains('稲荷')) {
       return SpotCategory.sightseeing;
+    }
+    if (cleanQuery.contains('食事') ||
+        cleanQuery.contains('ランチ') ||
+        cleanQuery.contains('ご飯') ||
+        cleanQuery.contains('ごはん') ||
+        cleanQuery.contains('定食') ||
+        cleanQuery.contains('レストラン') ||
+        cleanQuery.contains('食堂') ||
+        cleanQuery.contains('ラーメン') ||
+        cleanQuery.contains('そば') ||
+        cleanQuery.contains('蕎麦') ||
+        cleanQuery.contains('うどん') ||
+        cleanQuery.contains('カフェ') ||
+        cleanQuery.contains('海鮮') ||
+        cleanQuery.contains('肉') ||
+        cleanQuery.contains('名物料理')) {
+      return SpotCategory.dining;
     }
     if (cleanQuery.contains('グルメ') ||
         cleanQuery.contains('マルシェ') ||
@@ -1348,6 +1395,16 @@ class GeminiOutingService {
               ];
         break;
 
+      case SpotCategory.dining:
+        searchQueries = specificKeyword.isNotEmpty
+            ? ['$query ランチ 美味しい 食事処', '$query ご当地グルメ 定食 食堂']
+            : [
+                '$queryPrefix ご当地グルメ 名物ランチ 食堂 定食屋',
+                '$queryPrefix 人気ランチ 子連れ 美味しい レストラン',
+                '$queryPrefix ドライブ レストラン 名物料理 郷土料理',
+              ];
+        break;
+
       case SpotCategory.gourmet:
         searchQueries = specificKeyword.isNotEmpty
             ? ['$query グルメ マルシェ 道の駅', '$query 市場 直売所']
@@ -1589,6 +1646,9 @@ class GeminiOutingService {
         tags.add(SpotTag.freeEntry);
       } else if (category == SpotCategory.sightseeing) {
         tags.add(SpotTag.baby);
+      } else if (category == SpotCategory.dining) {
+        tags.add(SpotTag.food);
+        tags.add(SpotTag.kids);
       } else if (category == SpotCategory.gourmet) {
         tags.add(SpotTag.food);
       }
@@ -1740,6 +1800,179 @@ $spotSummaries
     return null;
   }
 
+  /// 夫婦のお気に入り履歴をもとに、Gemini 3.5 Flash-Lite が好みを分析＆おすすめ提案を生成
+  static Future<CouplePreferenceAiInsight> generatePersonalizedInsight({
+    required List<OutingSpot> favorites,
+    required TohokuRegion currentRegion,
+    required List<OutingSpot> currentSpots,
+    required DateTimeRange dateRange,
+  }) async {
+    // favorites が空の場合はガイド文を返す
+    if (favorites.isEmpty) {
+      return CouplePreferenceAiInsight(
+        preferenceSummary: 'お気に入り未登録',
+        recommendationText:
+            '気になるスポットの「❤️」を押すと、Geminiがおふたりの好み（温泉・自然・食事等）を自動分析し、${currentRegion.label}のおすすめ巡り方を提案します！',
+        favoriteKeywords: const ['ハートを付けて好みを学習'],
+        analyzedAt: DateTime.now(),
+      );
+    }
+
+    final apiKey = AppApiKeys.geminiApiKey.trim();
+    if (apiKey.isEmpty || apiKey == 'YOUR_GEMINI_API_KEY') {
+      return _generateLocalPreferenceInsight(favorites, currentRegion);
+    }
+
+    final dateLabel = formatDateRange(dateRange);
+    final favListText = favorites
+        .take(10)
+        .map((s) {
+          final note = s.coupleNote.isNotEmpty ? '（メモ: ${s.coupleNote}）' : '';
+          final pick = s.pickedBy?.label ?? '2人とも';
+          return '・${s.title} [${s.category.label}] 担当: $pick $note';
+        })
+        .join('\n');
+
+    final candidateListText = currentSpots
+        .where((s) => !favorites.any((f) => f.id == s.id))
+        .take(6)
+        .map((s) => '・${s.title} [${s.category.label}]（${s.address}）')
+        .join('\n');
+
+    final prompt = '''
+あなたは小学生連れファミリー向けのお出かけコンシェルジュAIです。
+あるご夫婦が「行きたい！」とハートを付けたスポット履歴はこちらです：
+$favListText
+
+現在、ご夫婦は【${currentRegion.label}】の週末（$dateLabel）のお出かけを調べています。
+現地で訪問可能なスポット候補例:
+$candidateListText
+
+【依頼】
+ご夫婦のお気に入り履歴から好みや傾向を分析し、${currentRegion.label}での週末の過ごし方やイチオシ候補を提案してください。
+必ず以下のJSONフォーマットのみを出力してください（Markdownの```json等のコードブロックは不要）：
+{
+  "summary": "ご夫婦の好み傾向（20〜30文字程度。例：名物グルメと自然の温泉が大好きなご夫婦）",
+  "keywords": ["温泉好き", "ご当地グルメ", "のんびり散策"],
+  "recommendation": "このご夫婦の好みに合わせた、${currentRegion.label}でのおすすめスポットや週末ドライブの巡り方アドバイス（100〜140文字程度。親しみやすい丁寧な日本語）"
+}
+''';
+
+    final targetModels = [
+      'gemini-3.5-flash-lite',
+      'gemini-3.8-flash',
+      'gemini-2.5-flash',
+    ];
+
+    for (final model in targetModels) {
+      try {
+        final uri = Uri.parse(
+          'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey',
+        );
+        final response = await http.post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'contents': [
+              {
+                'parts': [
+                  {'text': prompt}
+                ]
+              }
+            ],
+            'generationConfig': {
+              'responseMimeType': 'application/json',
+              'maxOutputTokens': 300,
+            },
+          }),
+        ).timeout(const Duration(seconds: 5));
+
+        if (response.statusCode == 200) {
+          final jsonResponse = jsonDecode(utf8.decode(response.bodyBytes));
+          final candidates = jsonResponse['candidates'] as List<dynamic>?;
+          if (candidates != null && candidates.isNotEmpty) {
+            final content = (candidates.first as Map<String, dynamic>)['content']
+                as Map<String, dynamic>?;
+            final parts = content?['parts'] as List<dynamic>?;
+            if (parts != null && parts.isNotEmpty) {
+              final rawText =
+                  (parts.first as Map<String, dynamic>)['text'] as String?;
+              if (rawText != null) {
+                try {
+                  final cleaned = rawText
+                      .replaceAll('```json', '')
+                      .replaceAll('```', '')
+                      .trim();
+                  final parsed = jsonDecode(cleaned) as Map<String, dynamic>;
+                  final summary =
+                      parsed['summary'] as String? ?? '夫婦のお気に入り分析';
+                  final rawKw = parsed['keywords'] as List<dynamic>? ?? [];
+                  final keywords = rawKw.map((k) => k.toString()).toList();
+                  final rec = parsed['recommendation'] as String? ?? '';
+                  if (rec.isNotEmpty) {
+                    return CouplePreferenceAiInsight(
+                      preferenceSummary: summary,
+                      recommendationText: rec,
+                      favoriteKeywords:
+                          keywords.isEmpty ? ['夫婦のイチオシ'] : keywords,
+                      analyzedAt: DateTime.now(),
+                    );
+                  }
+                } catch (_) {}
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 万が一AI通信が失敗した場合のオフライン推論フォールバック
+    return _generateLocalPreferenceInsight(favorites, currentRegion);
+  }
+
+  /// オフライン・安全フォールバック用の夫婦傾向分析
+  static CouplePreferenceAiInsight _generateLocalPreferenceInsight(
+    List<OutingSpot> favorites,
+    TohokuRegion currentRegion,
+  ) {
+    final catCounts = <SpotCategory, int>{};
+    for (final spot in favorites) {
+      catCounts[spot.category] = (catCounts[spot.category] ?? 0) + 1;
+    }
+    final topCat = catCounts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final mainCatLabel =
+        topCat.isNotEmpty ? topCat.first.key.label : 'お出かけ';
+
+    final keywords = <String>[];
+    if (favorites.any((s) => s.category == SpotCategory.onsen)) {
+      keywords.add('♨️ 温泉好き');
+    }
+    if (favorites.any((s) =>
+        s.category == SpotCategory.dining ||
+        s.category == SpotCategory.gourmet)) {
+      keywords.add('🍽️ グルメ好き');
+    }
+    if (favorites.any((s) =>
+        s.category == SpotCategory.park ||
+        s.category == SpotCategory.smallPark)) {
+      keywords.add('🌳 公園・自然派');
+    }
+    if (favorites.any((s) => s.category == SpotCategory.sightseeing)) {
+      keywords.add('⛩️ 歴史・散策');
+    }
+    if (keywords.isEmpty) keywords.add('🚗 ドライブ好き');
+
+    final favTitles = favorites.take(2).map((s) => s.title).join('や');
+    return CouplePreferenceAiInsight(
+      preferenceSummary: '$mainCatLabelを中心としたお出かけ好き',
+      recommendationText:
+          '「$favTitles」をお気に入りに選ばれたおふたりには、${currentRegion.label}でも立ち寄りドライブやご当地グルメ・スポットを巡るコースがぴったりです！',
+      favoriteKeywords: keywords,
+      analyzedAt: DateTime.now(),
+    );
+  }
+
   /// フォールバック検索（オフライン・テスト環境用）
   static AiSearchResult _fallbackCategorySearch({
     required String query,
@@ -1807,6 +2040,20 @@ $spotSummaries
         t.contains('屋内') ||
         t.contains('児童館')) {
       return SpotCategory.indoor;
+    }
+    if (t.contains('食堂') ||
+        t.contains('定食') ||
+        t.contains('ランチ') ||
+        t.contains('レストラン') ||
+        t.contains('ラーメン') ||
+        t.contains('そば') ||
+        t.contains('蕎麦') ||
+        t.contains('うどん') ||
+        t.contains('カフェ') ||
+        t.contains('食事処') ||
+        t.contains('ごはん') ||
+        t.contains('御食事')) {
+      return SpotCategory.dining;
     }
     if (t.contains('マルシェ') ||
         t.contains('グルメ') ||

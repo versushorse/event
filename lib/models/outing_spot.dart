@@ -28,6 +28,7 @@ enum TohokuRegion {
 enum SpotCategory {
   event('期間限定イベント', '🎪'),
   gourmet('グルメ・マルシェ', '🍠'),
+  dining('地元グルメ・食事処', '🍽️'),
   park('大きな公園（小学生）', '🏃'),
   onsen('温泉・日帰り銭湯', '♨️'),
   indoor('屋内スポット', '🏛️'),
@@ -37,6 +38,21 @@ enum SpotCategory {
   final String label;
   final String icon;
   const SpotCategory(this.label, this.icon);
+}
+
+/// 夫婦のお気に入り傾向からGemini 3.5 Flash-Liteが導き出したパーソナライズAI分析結果
+class CouplePreferenceAiInsight {
+  final String preferenceSummary; // 例: 「温泉＆名物グルメに目がない自然派ファミリー」
+  final String recommendationText; // 例: 「秋保温泉や定義如来がお好きなご夫婦なら、山形では...」
+  final List<String> favoriteKeywords; // 例: ['温泉', 'ご当地グルメ', '自然散策']
+  final DateTime analyzedAt;
+
+  const CouplePreferenceAiInsight({
+    required this.preferenceSummary,
+    required this.recommendationText,
+    required this.favoriteKeywords,
+    required this.analyzedAt,
+  });
 }
 
 /// イベント・スポットのタイプ別タグ（小学生向け・グルメ・駐車場など）

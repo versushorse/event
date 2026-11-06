@@ -76,6 +76,10 @@ class _HomeScreenState extends State<HomeScreen> {
   /// AIからの要約コメント
   String _aiSummaryComment = '';
 
+  /// 夫婦の好み分析AI（Gemini 3.5 Flash-Lite）のインサイト
+  CouplePreferenceAiInsight? _coupleAiInsight;
+  bool _isLoadingAiInsight = false;
+
   /// マップ画面で選択中のスポット
   OutingSpot? _selectedMapSpot;
 
@@ -222,6 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _selectedMapSpot = _filteredSpots.first;
         }
       });
+      _fetchCoupleAiInsight();
     }
   }
 
@@ -399,6 +404,33 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _syncStatusLabel = lastSync;
     });
+
+    // クラウド受信後に夫婦の好みを再分析
+    _fetchCoupleAiInsight();
+  }
+
+  /// 夫婦の好み分析AI（Gemini 3.5 Flash-Lite）の分析・提案を取得
+  Future<void> _fetchCoupleAiInsight({bool forceRefresh = false}) async {
+    if (!mounted) return;
+    setState(() => _isLoadingAiInsight = true);
+    try {
+      final insight = await GeminiOutingService.generatePersonalizedInsight(
+        favorites: _favoriteSpots,
+        currentRegion: _selectedRegion,
+        currentSpots: _allSpots,
+        dateRange: _targetDateRange,
+      );
+      if (mounted) {
+        setState(() {
+          _coupleAiInsight = insight;
+          _isLoadingAiInsight = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isLoadingAiInsight = false);
+      }
+    }
   }
 
   /// 直近の検索結果に含まれるスポットIDセット
@@ -449,6 +481,7 @@ class _HomeScreenState extends State<HomeScreen> {
       CameraUpdate.newLatLngZoom(_mapCenterLatLng, 10.5),
     );
     await _runAiSearch(null, _selectedCategory);
+    _fetchCoupleAiInsight();
   }
 
   /// 期間指定ダイアログ・カレンダーピッカーを開く
@@ -814,6 +847,9 @@ class _HomeScreenState extends State<HomeScreen> {
         duration: const Duration(seconds: 2),
       ),
     );
+
+    // お気に入り変更に伴い夫婦の好みを再分析
+    _fetchCoupleAiInsight();
   }
 
   /// 夫婦のお気に入りステータスやメモを更新する
@@ -838,6 +874,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       setState(() => _syncStatusLabel = lastSync);
     }
+
+    // メモや担当者更新に伴い夫婦の好みを再分析
+    _fetchCoupleAiInsight();
   }
 
   /// 外部Googleマップアプリを起動してナビを開始する
@@ -1255,6 +1294,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
+
+                // 💑 夫婦の好みAIナビ（Gemini 3.5 Flash-Lite）カード
+                _buildCoupleAiInsightCard(context),
+                const SizedBox(height: 8),
               ],
             ),
           ),
@@ -1341,6 +1384,190 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// 💑 夫婦の好みAIナビカード（Gemini 3.5 Flash-Lite）
+  Widget _buildCoupleAiInsightCard(BuildContext context) {
+    final favCount = _favoriteSpots.length;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.pink.shade50.withValues(alpha: 0.65),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: Colors.pink.shade200.withValues(alpha: 0.8),
+          width: 1.2,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // タイトル行 ＆ 再分析ボタン
+          Row(
+            children: [
+              const Text('💑 ', style: TextStyle(fontSize: 18)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text(
+                          '夫婦の好みAIナビ',
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF880E4F),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: Colors.pink.shade100,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text(
+                            'Flash-Lite',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFFAD1457),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      favCount > 0
+                          ? '夫婦のお気に入り（$favCount件）から好みをAI分析'
+                          : '気になるスポットの❤️を押すと好みをAI分析',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.pink.shade800.withValues(alpha: 0.8),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (_isLoadingAiInsight)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFE91E63)),
+                  ),
+                )
+              else
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 20),
+                  tooltip: '夫婦の好みを再分析',
+                  visualDensity: VisualDensity.compact,
+                  color: Colors.pink.shade700,
+                  onPressed: () => _fetchCoupleAiInsight(forceRefresh: true),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+
+          // 本文コンテンツ
+          if (_coupleAiInsight != null) ...[
+            // 夫婦の好みキャッチコピー ＆ キーワードタグ
+            if (_coupleAiInsight!.preferenceSummary.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    const Icon(Icons.psychology_alt_outlined,
+                        size: 15, color: Color(0xFFC2185B)),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        _coupleAiInsight!.preferenceSummary,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF880E4F),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            // キーワードバッジ
+            if (_coupleAiInsight!.favoriteKeywords.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: _coupleAiInsight!.favoriteKeywords.map((tag) {
+                    final displayTag = tag.startsWith('#') ? tag : '#$tag';
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: Colors.pink.shade200,
+                        ),
+                      ),
+                      child: Text(
+                        displayTag,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFC2185B),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+
+            // AI提案テキスト（Gemini 3.5 Flash-Lite）
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.85),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _coupleAiInsight!.recommendationText,
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.45,
+                  color: Color(0xFF37474F),
+                ),
+              ),
+            ),
+          ] else if (_isLoadingAiInsight) ...[
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 4),
+              child: Text(
+                '夫婦のお気に入りから好みを分析しています...',
+                style: TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+            ),
+          ] else ...[
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 2),
+              child: Text(
+                'お気に入り（❤️）を増やすと、Gemini 3.5 Flash-Lite が夫婦の好みを学習して、ぴったりなお出かけスポットを提案します！',
+                style: TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1849,6 +2076,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 scrollDirection: Axis.horizontal,
                 child: Row(
                   children: [
+                    _buildMapGenreChip(SpotCategory.dining, '🍽️ 周辺の食事処・ランチ'),
                     _buildMapGenreChip(SpotCategory.onsen, '♨️ 周辺の温泉・銭湯'),
                     _buildMapGenreChip(SpotCategory.sightseeing, '⛩️ 周辺の神社仏閣'),
                     _buildMapGenreChip(SpotCategory.park, '🏃 周辺の大きな公園'),
@@ -2317,6 +2545,15 @@ class _HomeScreenState extends State<HomeScreen> {
                           spacing: 6,
                           runSpacing: 6,
                           children: [
+                            ActionChip(
+                              label: const Text('🍽️ 近くの食事処・ランチ',
+                                  style: TextStyle(fontSize: 12)),
+                              onPressed: () {
+                                Navigator.of(sheetContext).pop();
+                                _jumpToMapAndSearchNearby(
+                                    spot, SpotCategory.dining);
+                              },
+                            ),
                             ActionChip(
                               label: const Text('♨️ 近くの温泉・銭湯',
                                   style: TextStyle(fontSize: 12)),
