@@ -51,8 +51,8 @@ class CoupleSyncService {
   }
 
   /// クラウド同期（同じ家族合言葉を持つ夫婦端末間でリアルタイム同期）
-  /// 1. Firebase Realtime Database（設定されている場合・最も堅牢で永続的）
-  /// 2. 設定不要のオープンKVS（Firebase未設定時のデフォルト自動同期）
+  /// 1. Firebase Realtime Database（設定されている場合）
+  /// 2. 高速CDNトピック（ntfy.sh）＋ オープンKVS による確実な即時同期
   static Future<List<OutingSpot>?> syncWithCloud({
     required String roomCode,
     required List<OutingSpot> localFavorites,
@@ -69,7 +69,7 @@ class CoupleSyncService {
         localFavorites: localFavorites,
       );
     } else {
-      return _syncWithFallbackKvs(
+      return _syncWithFastCdnAndKvs(
         roomCode: sanitizedCode,
         localFavorites: localFavorites,
       );
@@ -88,9 +88,8 @@ class CoupleSyncService {
           : baseUrl;
       final endpoint = Uri.parse('$cleanBaseUrl/rooms/$roomCode.json');
 
-      // クラウド側の最新データを取得
       final getRes =
-          await http.get(endpoint).timeout(const Duration(seconds: 5));
+          await http.get(endpoint).timeout(const Duration(seconds: 10));
       List<OutingSpot> cloudList = [];
       if (getRes.statusCode == 200 &&
           getRes.body.isNotEmpty &&
@@ -108,7 +107,6 @@ class CoupleSyncService {
         }
       }
 
-      // マージ（ID単位で統合）
       final mergedMap = <String, OutingSpot>{};
       for (final spot in cloudList) {
         mergedMap[spot.id] = spot;
@@ -119,7 +117,6 @@ class CoupleSyncService {
 
       final mergedList = mergedMap.values.toList();
 
-      // クラウドへ保存
       final postBody = jsonEncode(mergedList.map((s) => s.toJson()).toList());
       await http
           .put(
@@ -127,7 +124,7 @@ class CoupleSyncService {
             headers: {'Content-Type': 'application/json'},
             body: postBody,
           )
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 10));
 
       await saveLocalFavorites(mergedList);
       final prefs = await SharedPreferences.getInstance();
@@ -140,46 +137,96 @@ class CoupleSyncService {
     }
   }
 
-  /// 2. 設定不要のオープンKVSによる自動同期（Firebase未設定時のバックアップ）
-  static Future<List<OutingSpot>?> _syncWithFallbackKvs({
+  /// 2. 高速CDN即時通信 ＋ オープンKVS による即座の同期
+  static Future<List<OutingSpot>?> _syncWithFastCdnAndKvs({
     required String roomCode,
     required List<OutingSpot> localFavorites,
   }) async {
+    final mergedMap = <String, OutingSpot>{};
+    for (final spot in localFavorites) {
+      mergedMap[spot.id] = spot;
+    }
+
+    final cdnTopic = 'weekend_outing_couple_$roomCode';
+    final cdnPollUrl = Uri.parse('https://ntfy.sh/$cdnTopic/json?poll=1');
+
+    // A. 高速CDNから最新メッセージ（ハート候補）をフェッチ
+    try {
+      final cdnRes =
+          await http.get(cdnPollUrl).timeout(const Duration(seconds: 4));
+      if (cdnRes.statusCode == 200 && cdnRes.body.isNotEmpty) {
+        final lines = cdnRes.body.split('\n');
+        for (final line in lines.reversed) {
+          final trimmed = line.trim();
+          if (trimmed.isEmpty) continue;
+          try {
+            final obj = jsonDecode(trimmed) as Map<String, dynamic>;
+            if (obj['event'] == 'message' && obj['message'] != null) {
+              final msgStr = obj['message'] as String;
+              final spotListRaw = jsonDecode(msgStr) as List<dynamic>;
+              for (final raw in spotListRaw) {
+                final spot = OutingSpot.fromJson(raw as Map<String, dynamic>);
+                mergedMap[spot.id] = spot;
+              }
+              break; // 最新の1件でOK
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      debugPrint('CDNフェッチ注意: $e');
+    }
+
+    // B. オープンKVSからもフェッチ（タイムアウト10秒に緩和）
     try {
       final kvsKey = 'room_$roomCode';
       final getUrl = Uri.parse(
           'https://keyvalue.immanuel.co/api/KeyVal/GetValue/$_fallbackKvsAppKey/$kvsKey');
-
-      // クラウド側の最新データを取得
-      final getRes = await http.get(getUrl).timeout(const Duration(seconds: 5));
-      List<OutingSpot> cloudList = [];
+      final getRes =
+          await http.get(getUrl).timeout(const Duration(seconds: 8));
       if (getRes.statusCode == 200 && getRes.body.isNotEmpty) {
         final rawVal = getRes.body.trim().replaceAll('"', '');
         if (rawVal.isNotEmpty && rawVal != 'null') {
           try {
             final jsonStr = _decodeBase64Url(rawVal);
             final decoded = jsonDecode(jsonStr) as List<dynamic>;
-            cloudList = decoded
-                .map((item) => _fromCompactJson(item as Map<String, dynamic>))
-                .toList();
+            for (final item in decoded) {
+              final spot =
+                  _fromCompactJson(item as Map<String, dynamic>);
+              if (!mergedMap.containsKey(spot.id)) {
+                mergedMap[spot.id] = spot;
+              }
+            }
           } catch (e) {
             debugPrint('オープンKVSデコードエラー: $e');
           }
         }
       }
+    } catch (e) {
+      debugPrint('オープンKVS取得注意: $e');
+    }
 
-      // マージ（ID単位で統合）
-      final mergedMap = <String, OutingSpot>{};
-      for (final spot in cloudList) {
-        mergedMap[spot.id] = spot;
-      }
-      for (final spot in localFavorites) {
-        mergedMap[spot.id] = spot;
-      }
+    final mergedList = mergedMap.values.toList();
 
-      final mergedList = mergedMap.values.toList();
+    // C. 高速CDNに最新のお気に入りリストを配信（相手のスマホへ即座にプッシュ）
+    try {
+      final cdnPostUrl = Uri.parse('https://ntfy.sh/$cdnTopic');
+      final cdnBody =
+          jsonEncode(mergedList.map((s) => s.toJson()).toList());
+      await http
+          .post(
+            cdnPostUrl,
+            headers: {'Title': 'CoupleFavoritesSync'},
+            body: cdnBody,
+          )
+          .timeout(const Duration(seconds: 4));
+    } catch (e) {
+      debugPrint('CDN送信注意: $e');
+    }
 
-      // 1024文字制限に収まるよう軽量JSONに変換（最新順で最大20件程度）
+    // D. オープンKVSへも非同期で保存
+    try {
+      final kvsKey = 'room_$roomCode';
       final compactList = mergedList
           .take(20)
           .map((s) => _toCompactJson(s))
@@ -192,17 +239,16 @@ class CoupleSyncService {
       await http.post(
         updateUrl,
         headers: {'Content-Length': '0'},
-      ).timeout(const Duration(seconds: 5));
-
-      await saveLocalFavorites(mergedList);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefLastSyncKey, DateTime.now().toIso8601String());
-
-      return mergedList;
+      ).timeout(const Duration(seconds: 8));
     } catch (e) {
-      debugPrint('オープンKVS同期エラー: $e');
-      return null;
+      debugPrint('オープンKVS保存注意: $e');
     }
+
+    await saveLocalFavorites(mergedList);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefLastSyncKey, DateTime.now().toIso8601String());
+
+    return mergedList;
   }
 
   /// Base64Url エンコード
@@ -290,7 +336,8 @@ class CoupleSyncService {
       if (spot.coupleNote.isNotEmpty) {
         buffer.writeln('   💬 メモ: ${spot.coupleNote}');
       }
-      buffer.writeln('   🗺️ 地図: https://maps.google.com/?q=${spot.latitude},${spot.longitude}');
+      buffer.writeln(
+          '   🗺️ 地図: https://maps.google.com/?q=${spot.latitude},${spot.longitude}');
       buffer.writeln();
     }
 

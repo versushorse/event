@@ -952,6 +952,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 LatLng(_selectedMapSpot!.latitude, _selectedMapSpot!.longitude),
               ),
             );
+          } else if (index == 2) {
+            // 「夫婦の行きたい！」タブを開いたときに自動で最新同期を取得
+            _triggerCloudSync();
           }
         },
         destinations: [
