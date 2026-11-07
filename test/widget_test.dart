@@ -207,5 +207,9 @@ void main() {
     // 距離が遠くても「いこーよ」のファミリー向けイベントが第1位になることを確認
     expect(sorted.first.id, 'ikoyo_4_nature_kids');
     expect(sorted.first.sourceInfo, contains('いこーよ'));
+    expect(sorted.first.sourceBadgeLabel, 'いこーよ');
+    expect(sorted.first.sourceBadgeIcon, '🧒');
+    expect(generalEvent.sourceBadgeLabel, 'Walkerplus');
+    expect(generalEvent.sourceBadgeIcon, '🚶');
   });
 }

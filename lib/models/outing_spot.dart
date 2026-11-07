@@ -187,6 +187,59 @@ class OutingSpot {
     return '車で約$hours時間$mins分';
   }
 
+  /// 情報ソースの表示用短縮ラベル（例: 'いこーよ', 'せんだい旅日和', '仙台つーしん', 'Walkerplus', 'Googleマップ'）
+  String get sourceBadgeLabel {
+    if (sourceInfo.contains('いこーよ') ||
+        id.startsWith('ikoyo_') ||
+        url.contains('iko-yo.net')) {
+      return 'いこーよ';
+    }
+    if (sourceInfo.contains('せんだい旅日和') ||
+        url.contains('sendai-tabibiyori.info')) {
+      return 'せんだい旅日和';
+    }
+    if (sourceInfo.contains('仙台つーしん') ||
+        url.contains('sendai-tushin.jp')) {
+      return '仙台つーしん';
+    }
+    if (sourceInfo.contains('Walkerplus') ||
+        url.contains('walkerplus.com')) {
+      return 'Walkerplus';
+    }
+    if (sourceInfo.contains('Google') || id.startsWith('places_')) {
+      return 'Googleマップ';
+    }
+    if (sourceInfo.contains('公式')) {
+      return '公式サイト';
+    }
+    return sourceInfo.isNotEmpty ? sourceInfo.split(' ').first : 'Web情報';
+  }
+
+  /// 情報ソースのアイコン
+  String get sourceBadgeIcon {
+    if (sourceInfo.contains('いこーよ') ||
+        id.startsWith('ikoyo_') ||
+        url.contains('iko-yo.net')) {
+      return '🧒';
+    }
+    if (sourceInfo.contains('せんだい旅日和') ||
+        url.contains('sendai-tabibiyori.info')) {
+      return '🏯';
+    }
+    if (sourceInfo.contains('仙台つーしん') ||
+        url.contains('sendai-tushin.jp')) {
+      return '📰';
+    }
+    if (sourceInfo.contains('Walkerplus') ||
+        url.contains('walkerplus.com')) {
+      return '🚶';
+    }
+    if (sourceInfo.contains('Google') || id.startsWith('places_')) {
+      return '🗺️';
+    }
+    return '🌐';
+  }
+
   /// 公式サイトまたは元記事を開くためのURL（未指定の場合はGoogle検索を開く）
   String get officialWebUrl {
     if (url.isNotEmpty && url.startsWith('http')) {
@@ -209,6 +262,7 @@ class OutingSpot {
     final notePart = coupleNote.isNotEmpty ? '\n💬 夫婦メモ: $coupleNote\n' : '';
     final urlPart = url.isNotEmpty ? '\n🌐 公式/元記事: $url\n' : '';
     return '【週末お出かけ候補】${category.icon} $title\n'
+        '🏷️ 情報元: $sourceBadgeIcon $sourceBadgeLabel\n'
         '📍 開催場所: $address\n'
         '🚗 $driveTimeLabel（約${distanceKm.toStringAsFixed(0)}km）\n'
         '📅 $scheduleText\n'

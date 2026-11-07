@@ -1573,6 +1573,31 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// 情報ソースに応じたテーマカラー
+  Color _getSourceBadgeColor(OutingSpot spot) {
+    if (spot.sourceInfo.contains('いこーよ') ||
+        spot.id.startsWith('ikoyo_') ||
+        spot.url.contains('iko-yo.net')) {
+      return Colors.orange.shade800;
+    }
+    if (spot.sourceInfo.contains('せんだい旅日和') ||
+        spot.url.contains('sendai-tabibiyori.info')) {
+      return Colors.teal.shade700;
+    }
+    if (spot.sourceInfo.contains('仙台つーしん') ||
+        spot.url.contains('sendai-tushin.jp')) {
+      return Colors.indigo.shade600;
+    }
+    if (spot.sourceInfo.contains('Walkerplus') ||
+        spot.url.contains('walkerplus.com')) {
+      return Colors.blue.shade700;
+    }
+    if (spot.sourceInfo.contains('Google') || spot.id.startsWith('places_')) {
+      return Colors.red.shade700;
+    }
+    return Colors.blueGrey.shade700;
+  }
+
   /// スポット提案カード1件分
   Widget _buildSpotCard(BuildContext context, OutingSpot spot) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -1646,6 +1671,35 @@ class _HomeScreenState extends State<HomeScreen> {
                                   fontSize: 12,
                                   fontWeight: FontWeight.bold,
                                   color: colorScheme.onPrimaryContainer,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: _getSourceBadgeColor(spot)
+                                .withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: _getSourceBadgeColor(spot)
+                                  .withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(spot.sourceBadgeIcon,
+                                  style: const TextStyle(fontSize: 12)),
+                              const SizedBox(width: 4),
+                              Text(
+                                spot.sourceBadgeLabel,
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: _getSourceBadgeColor(spot),
                                 ),
                               ),
                             ],
@@ -1808,7 +1862,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: const Icon(Icons.open_in_new, size: 16),
                     label: Text(
                       spot.url.isNotEmpty
-                          ? '🌐 公式・元記事を見る（外部ブラウザ）'
+                          ? '🌐 ${spot.sourceBadgeLabel}の元記事・公式を見る'
                           : '🔍 Webで最新情報を検索',
                       style: const TextStyle(
                           fontSize: 12.5, fontWeight: FontWeight.bold),
@@ -2308,7 +2362,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            '🚗 ${spot.driveTimeLabel} ｜ 📍 ${spot.address}',
+                            '🚗 ${spot.driveTimeLabel} ｜ ${spot.sourceBadgeIcon} ${spot.sourceBadgeLabel} ｜ 📍 ${spot.address}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 11),
@@ -2436,6 +2490,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         avatar: Text(spot.category.icon),
                         label: Text(spot.category.label),
                       ),
+                      Chip(
+                        avatar: Text(spot.sourceBadgeIcon),
+                        label: Text(spot.sourceBadgeLabel),
+                        backgroundColor: _getSourceBadgeColor(spot)
+                            .withValues(alpha: 0.12),
+                      ),
                       Text(
                         '🚗 ${spot.driveTimeLabel}（約${spot.distanceKm.toStringAsFixed(0)}km）',
                         style: TextStyle(
@@ -2486,6 +2546,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: const Text('駐車場・アクセス情報',
                         style: TextStyle(fontWeight: FontWeight.bold)),
                     subtitle: Text(spot.parkingInfo),
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.source_outlined),
+                    title: const Text('情報ソース・提供元',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text(
+                      '${spot.sourceBadgeIcon} ${spot.sourceInfo}',
+                      style: const TextStyle(
+                          fontSize: 13.5, fontWeight: FontWeight.w600),
+                    ),
                   ),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
@@ -2603,7 +2674,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       icon: const Icon(Icons.open_in_new, size: 18),
                       label: Text(
                         spot.url.isNotEmpty
-                            ? '🌐 公式サイト・元記事を開く（外部ブラウザ）'
+                            ? '🌐 ${spot.sourceBadgeLabel}の元記事・公式を開く'
                             : '🔍 Webで最新情報を検索',
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
