@@ -150,6 +150,15 @@ void main() {
     final sorted = GeminiOutingService.sortSpotsForFamily(list);
 
     expect(sorted.first.title.contains('ピカチュウ') || sorted.first.title.contains('恐竜'), isTrue);
-    expect(sorted.last.id, 'hotel_event'); // ホテルイベントは一番下位に回る
+    expect(sorted.last.id, 'hotel_event');
+  });
+
+  test('東北6県のいこーよ都道府県コード（JISコード）設定テスト', () {
+    expect(TohokuRegion.miyagi.ikoyoPrefectureId, 4);
+    expect(TohokuRegion.yamagata.ikoyoPrefectureId, 6);
+    expect(TohokuRegion.iwate.ikoyoPrefectureId, 3);
+    expect(TohokuRegion.fukushima.ikoyoPrefectureId, 7);
+    expect(TohokuRegion.akita.ikoyoPrefectureId, 5);
+    expect(TohokuRegion.aomori.ikoyoPrefectureId, 2); // ホテルイベントは一番下位に回る
   });
 }

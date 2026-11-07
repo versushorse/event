@@ -750,6 +750,13 @@ class GeminiOutingService {
           areaTarget: targetArea,
           targetDateRange: targetDateRange,
         ),
+        // 子どもとお出かけ情報 いこーよ（iko-yo.net）からファミリー向けイベントを取得
+        _scrapeIkoyoEvents(
+          startLat: startLat,
+          startLng: startLng,
+          region: effectiveRegion,
+          targetDateRange: targetDateRange,
+        ),
       ];
 
       final results = await Future.wait(futures).timeout(const Duration(seconds: 7));
@@ -1366,6 +1373,169 @@ class GeminiOutingService {
       }
     } catch (_) {}
     return areaEvents;
+  }
+
+
+  /// 「子どもとお出かけ情報 いこーよ（iko-yo.net）」から小学生・ファミリー向けイベントを取得
+  static Future<List<OutingSpot>> _scrapeIkoyoEvents({
+    required double startLat,
+    required double startLng,
+    required TohokuRegion region,
+    required DateTimeRange targetDateRange,
+  }) async {
+    final events = <OutingSpot>[];
+    final dateRangeLabel = formatDateRange(targetDateRange);
+    final prefId = region.ikoyoPrefectureId;
+
+    // 「今週末（term=7）」一覧と「全イベント」一覧の両方を並列取得
+    final urls = [
+      'https://iko-yo.net/events?prefecture_ids%5B%5D=$prefId&term=7',
+      'https://iko-yo.net/events?prefecture_ids%5B%5D=$prefId',
+    ];
+
+    try {
+      final responses = await Future.wait(
+        urls.map(
+          (u) => http.get(
+            Uri.parse(u),
+            headers: {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
+          ).timeout(const Duration(seconds: 4)).catchError((_) => http.Response('', 500)),
+        ),
+      );
+
+      final seenTitles = <String>{};
+
+      for (final res in responses) {
+        if (res.statusCode != 200 || res.bodyBytes.isEmpty) continue;
+        final html = utf8.decode(res.bodyBytes, allowMalformed: true);
+
+        // <script type="application/ld+json">...</script> から抽出
+        final scriptMatches = RegExp(
+          r'<script\s+type="application/ld\+json"\s*>(.*?)</script>',
+          dotAll: true,
+        ).allMatches(html);
+
+        for (final m in scriptMatches) {
+          final jsonStr = m.group(1)?.trim() ?? '';
+          if (!jsonStr.contains('"@type":"Event"') && !jsonStr.contains('"@type": "Event"')) {
+            continue;
+          }
+
+          try {
+            final data = jsonDecode(jsonStr);
+            if (data is! Map) continue;
+            if (data['@type'] != 'Event') continue;
+
+            final name = (data['name'] ?? '').toString().trim();
+            if (name.isEmpty || seenTitles.contains(name)) continue;
+
+            final desc = (data['description'] ?? '').toString().trim();
+            final startDateStr = (data['startDate'] ?? '').toString().trim();
+            final endDateStr = (data['endDate'] ?? startDateStr).toString().trim();
+
+            // 開催期間と指定週末が重なっているか判定
+            if (startDateStr.isNotEmpty) {
+              DateTime? evStart;
+              DateTime? evEnd;
+              try {
+                evStart = DateTime.parse(startDateStr);
+                evEnd = DateTime.parse(endDateStr);
+              } catch (_) {}
+
+              if (evStart != null && evEnd != null) {
+                final rStart = DateTime(targetDateRange.start.year, targetDateRange.start.month, targetDateRange.start.day);
+                final rEnd = DateTime(targetDateRange.end.year, targetDateRange.end.month, targetDateRange.end.day, 23, 59, 59);
+                if (evStart.isAfter(rEnd) || evEnd.isBefore(rStart)) {
+                  continue;
+                }
+              }
+            }
+
+            seenTitles.add(name);
+
+            // 会場・住所の抽出
+            var venueName = '';
+            var addressLocality = '';
+            final loc = data['location'];
+            if (loc is Map) {
+              venueName = (loc['name'] ?? '').toString().trim();
+              final addr = loc['address'];
+              if (addr is Map) {
+                addressLocality = (addr['addressLocality'] ?? '').toString().trim();
+              }
+            }
+
+            final eventUrl = (data['url'] ?? 'https://iko-yo.net/events?prefecture_ids%5B%5D=$prefId').toString().trim();
+            final offerName = data['offers'] is Map ? (data['offers']['name'] ?? '').toString().trim() : '';
+
+            // 会場座標と駐車場の解決
+            final combinedLocText = '$venueName $addressLocality ${region.label}';
+            final locInfo = _resolveVenueCoordinates(
+              combinedLocText,
+              fallbackLat: region.centerLat,
+              fallbackLng: region.centerLng,
+              fallbackAddress: addressLocality.isNotEmpty ? addressLocality : '${region.label}内（イベント会場）',
+            );
+
+            final distKm = LocationService.calculateDistanceKm(
+              startLat: startLat,
+              startLng: startLng,
+              endLat: locInfo.lat,
+              endLng: locInfo.lng,
+            );
+            final driveMin = LocationService.estimateDriveMinutes(distKm);
+
+            final isGourmet = name.contains('マルシェ') ||
+                name.contains('グルメ') ||
+                name.contains('食') ||
+                name.contains('味覚') ||
+                name.contains('収穫') ||
+                name.contains('フェス') ||
+                offerName.contains('グルメ');
+
+            final scheduleStr = startDateStr.isNotEmpty && endDateStr.isNotEmpty
+                ? (startDateStr == endDateStr ? '$startDateStr 開催' : '$startDateStr〜$endDateStr 開催中')
+                : '$dateRangeLabel 開催中';
+
+            events.add(
+              OutingSpot(
+                id: 'ikoyo_${region.ikoyoPrefectureId}_${name.hashCode.abs()}',
+                title: name,
+                subtitle: desc.length > 90 ? '${desc.substring(0, 90)}...' : desc,
+                category: isGourmet ? SpotCategory.gourmet : SpotCategory.event,
+                tags: [
+                  SpotTag.kids,
+                  if (isGourmet) SpotTag.food,
+                  if (desc.contains('自然') || desc.contains('公園') || desc.contains('森')) SpotTag.nature,
+                  if (desc.contains('体験') || desc.contains('工作') || desc.contains('クラフト')) SpotTag.toddler,
+                  if (locInfo.hasFreeParking) SpotTag.freeParking,
+                  if (desc.contains('無料') || desc.contains('入場無料')) SpotTag.freeEntry,
+                ],
+                driveMinutes: driveMin,
+                distanceKm: distKm,
+                scheduleText: scheduleStr,
+                parkingInfo: locInfo.parking,
+                recommendPoints: [
+                  if (desc.isNotEmpty) desc,
+                  '開催会場: ${venueName.isNotEmpty ? venueName : locInfo.address}',
+                  if (offerName.isNotEmpty) '体験ジャンル: $offerName',
+                  '子どもとお出かけ情報サイト「いこーよ」掲載の注目ファミリーイベント',
+                ],
+                aiTip: '小学生連れファミリーに大人気の体験イベントです。事前予約が必要な場合があるため公式サイトを確認してのお出かけがおすすめです。',
+                address: locInfo.address,
+                latitude: locInfo.lat,
+                longitude: locInfo.lng,
+                weatherText: '☀️ お出かけ日和',
+                sourceInfo: '子どもとお出かけ情報 いこーよ',
+                url: eventUrl,
+              ),
+            );
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    return events;
   }
 
   /// 座標から最も近い都道府県の Walkerplus ターゲットを返す

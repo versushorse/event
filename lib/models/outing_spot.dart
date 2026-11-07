@@ -2,16 +2,17 @@
 
 /// 東北6県の地域タブ定義
 enum TohokuRegion {
-  miyagi('宮城県', '📍', 'ar0204', 38.2682, 140.8694),
-  yamagata('山形県', '🍒', 'ar0206', 38.2404, 140.3633),
-  iwate('岩手県', '⛰️', 'ar0203', 39.7036, 141.1527),
-  fukushima('福島県', '🍑', 'ar0207', 37.7503, 140.4676),
-  akita('秋田県', '🌾', 'ar0205', 39.7186, 140.1024),
-  aomori('青森県', '🍎', 'ar0202', 40.8244, 140.7400);
+  miyagi('宮城県', '📍', 'ar0204', 4, 38.2682, 140.8694),
+  yamagata('山形県', '🍒', 'ar0206', 6, 38.2404, 140.3633),
+  iwate('岩手県', '⛰️', 'ar0203', 3, 39.7036, 141.1527),
+  fukushima('福島県', '🍑', 'ar0207', 7, 37.7503, 140.4676),
+  akita('秋田県', '🌾', 'ar0205', 5, 39.7186, 140.1024),
+  aomori('青森県', '🍎', 'ar0202', 2, 40.8244, 140.7400);
 
   final String label;
   final String icon;
   final String walkerplusCode;
+  final int ikoyoPrefectureId;
   final double centerLat;
   final double centerLng;
 
@@ -19,6 +20,7 @@ enum TohokuRegion {
     this.label,
     this.icon,
     this.walkerplusCode,
+    this.ikoyoPrefectureId,
     this.centerLat,
     this.centerLng,
   );
