@@ -159,6 +159,53 @@ void main() {
     expect(TohokuRegion.iwate.ikoyoPrefectureId, 3);
     expect(TohokuRegion.fukushima.ikoyoPrefectureId, 7);
     expect(TohokuRegion.akita.ikoyoPrefectureId, 5);
-    expect(TohokuRegion.aomori.ikoyoPrefectureId, 2); // ホテルイベントは一番下位に回る
+    expect(TohokuRegion.aomori.ikoyoPrefectureId, 2);
+  });
+
+  test('子どもとお出かけ情報「いこーよ」のイベントが最優先で上位に来るテスト', () {
+    final generalEvent = OutingSpot(
+      id: 'general_event',
+      title: '秋の蔵王観光キャンペーン',
+      subtitle: '地域の観光物産展',
+      category: SpotCategory.event,
+      tags: const [SpotTag.food],
+      driveMinutes: 20,
+      distanceKm: 12.0,
+      scheduleText: '11/7〜11/8開催',
+      parkingInfo: '駐車場あり',
+      recommendPoints: const ['物産フェア'],
+      aiTip: '',
+      address: '蔵王町',
+      latitude: 38.1,
+      longitude: 140.5,
+      weatherText: '晴れ',
+      sourceInfo: 'Walkerplusイベント情報',
+      url: '',
+    );
+
+    final ikoyoEvent = OutingSpot(
+      id: 'ikoyo_4_nature_kids',
+      title: 'むかっち博士の自然観察会「冬越しの動物探し」',
+      subtitle: '小学生・親子で楽しむ生き物ふれあい＆自然体験',
+      category: SpotCategory.event,
+      tags: const [SpotTag.kids, SpotTag.nature],
+      driveMinutes: 30, // 距離的には一般イベントより少し遠い
+      distanceKm: 20.0,
+      scheduleText: '11/7開催',
+      parkingInfo: '無料駐車場あり',
+      recommendPoints: const ['子ども向け自然体験'],
+      aiTip: '',
+      address: '仙台市若林区荒井',
+      latitude: 38.25,
+      longitude: 140.95,
+      weatherText: '晴れ',
+      sourceInfo: '子どもとお出かけ情報 いこーよ',
+      url: '',
+    );
+
+    final sorted = GeminiOutingService.sortSpotsForFamily([generalEvent, ikoyoEvent]);
+    // 距離が遠くても「いこーよ」のファミリー向けイベントが第1位になることを確認
+    expect(sorted.first.id, 'ikoyo_4_nature_kids');
+    expect(sorted.first.sourceInfo, contains('いこーよ'));
   });
 }

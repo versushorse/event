@@ -809,6 +809,11 @@ class GeminiOutingService {
         '${spot.title} ${spot.subtitle} ${spot.recommendPoints.join(" ")} ${spot.parkingInfo} ${spot.address}'
             .toLowerCase();
 
+    // 0. 子どもとお出かけ専門「いこーよ」の情報は最優先ブースト（+150点！）
+    if (spot.sourceInfo.contains('いこーよ') || spot.id.startsWith('ikoyo_')) {
+      score += 150;
+    }
+
     // 1. 子ども・小学生・キャラクター・体験・遊び（最優先: +120点）
     const kidsWords = [
       'ポケモン', 'ピカチュウ', '恐竜', 'ダイナソー', 'アンパンマン', 'アニメ', 'キャラクター',
