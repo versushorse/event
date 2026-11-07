@@ -1,4 +1,5 @@
-// 夫婦間で共有する「ここ行きたい！」リアルタイム同期お気に入りリスト画面
+// 夫婦間で共有する「ここ行きたい！」＆「💮 行ったよ！思い出スタンプ帳」画面
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -11,6 +12,7 @@ class FavoritesScreen extends StatefulWidget {
   final ValueChanged<String> onRoomCodeChanged;
   final void Function(OutingSpot spot, PartnerPick pickedBy, String note)
       onUpdateFavorite;
+  final ValueChanged<OutingSpot>? onUpdateVisitedSpot;
   final ValueChanged<OutingSpot> onRemoveFavorite;
   final ValueChanged<OutingSpot> onOpenSpotDetail;
   final VoidCallback onTriggerSync;
@@ -22,6 +24,7 @@ class FavoritesScreen extends StatefulWidget {
     required this.coupleRoomCode,
     required this.onRoomCodeChanged,
     required this.onUpdateFavorite,
+    this.onUpdateVisitedSpot,
     required this.onRemoveFavorite,
     required this.onOpenSpotDetail,
     required this.onTriggerSync,
@@ -34,15 +37,21 @@ class FavoritesScreen extends StatefulWidget {
 
 class _FavoritesScreenState extends State<FavoritesScreen> {
   PartnerPick? _selectedFilter;
+  bool _onlyVisitedFilter = false;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final filteredSpots = _selectedFilter == null
-        ? widget.favoriteSpots
-        : widget.favoriteSpots
-            .where((s) => s.pickedBy == _selectedFilter)
-            .toList();
+    final visitedCount =
+        widget.favoriteSpots.where((s) => s.isVisited).length;
+
+    final filteredSpots = widget.favoriteSpots.where((s) {
+      if (_onlyVisitedFilter && !s.isVisited) return false;
+      if (_selectedFilter != null && s.pickedBy != _selectedFilter) {
+        return false;
+      }
+      return true;
+    }).toList();
 
     return Column(
       children: [
@@ -79,9 +88,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          '夫婦のリアルタイム共有ボード',
+                          '夫婦の共有ボード ＆ 思い出スタンプ帳',
                           style: TextStyle(
-                            fontSize: 15,
+                            fontSize: 14.5,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -112,6 +121,12 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                       ],
                     ),
                   ),
+                  if (widget.favoriteSpots.isNotEmpty)
+                    IconButton.filledTonal(
+                      tooltip: '🎰 行きたい候補からルーレット抽選！',
+                      onPressed: () => _showFavoritesRouletteDialog(context),
+                      icon: const Text('🎰', style: TextStyle(fontSize: 16)),
+                    ),
                   IconButton.filledTonal(
                     tooltip: '今すぐ同期',
                     onPressed: widget.onTriggerSync,
@@ -129,7 +144,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
-                            '📋 お気に入り一覧をコピーしました！LINEやメッセージに貼り付けて共有できます',
+                            '📋 お気に入り＆思い出一覧をコピーしました！LINEに貼り付けて共有できます',
                           ),
                           duration: Duration(seconds: 3),
                         ),
@@ -148,7 +163,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           ),
         ),
 
-        // 誰が気になるかの絞り込みチップ
+        // 誰が気になるか ＆ 💮行ったよ！スタンプ帳の絞り込みチップ
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -156,8 +171,22 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             children: [
               FilterChip(
                 label: Text('すべて (${widget.favoriteSpots.length})'),
-                selected: _selectedFilter == null,
-                onSelected: (_) => setState(() => _selectedFilter = null),
+                selected: _selectedFilter == null && !_onlyVisitedFilter,
+                onSelected: (_) => setState(() {
+                  _selectedFilter = null;
+                  _onlyVisitedFilter = false;
+                }),
+              ),
+              const SizedBox(width: 8),
+              FilterChip(
+                avatar: const Text('💮'),
+                label: Text('行ったよ！思い出 ($visitedCount)'),
+                selected: _onlyVisitedFilter,
+                selectedColor: Colors.orange.shade100,
+                onSelected: (val) => setState(() {
+                  _onlyVisitedFilter = val;
+                  if (val) _selectedFilter = null;
+                }),
               ),
               const SizedBox(width: 8),
               ...PartnerPick.values.map((pick) {
@@ -169,9 +198,10 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   child: FilterChip(
                     avatar: Text(pick.icon),
                     label: Text('${pick.label} ($count)'),
-                    selected: _selectedFilter == pick,
+                    selected: _selectedFilter == pick && !_onlyVisitedFilter,
                     onSelected: (_) {
                       setState(() {
+                        _onlyVisitedFilter = false;
                         _selectedFilter =
                             _selectedFilter == pick ? null : pick;
                       });
@@ -193,18 +223,24 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          Icons.favorite_border,
+                          _onlyVisitedFilter
+                              ? Icons.verified_outlined
+                              : Icons.favorite_border,
                           size: 56,
                           color: colorScheme.outline,
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'まだ「行きたい！」スポットがありません',
+                          _onlyVisitedFilter
+                              ? 'まだ「💮 行ったよ！」スタンプがありません'
+                              : 'まだ「行きたい！」スポットがありません',
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          '奥様または旦那様がハートボタンを押すと、自動的に2人のスマホに候補が同期されます！',
+                          _onlyVisitedFilter
+                              ? '実際にお出かけしたスポットの「💮 行ったよ！」ボタンを押すと、家族の思い出スタンプ帳として記録されます！'
+                              : '奥様または旦那様がハートボタンを押すと、自動的に2人のスマホに候補が同期されます！',
                           textAlign: TextAlign.center,
                           style:
                               Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -245,7 +281,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 夫婦ステータスバッジ ＆ 削除ボタン
+              // 夫婦ステータスバッジ ＆ 💮行ったよバッジ ＆ 削除ボタン
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -255,6 +291,25 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                       runSpacing: 6,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
+                        if (spot.isVisited)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.shade100,
+                              borderRadius: BorderRadius.circular(20),
+                              border:
+                                  Border.all(color: Colors.deepOrange.shade300),
+                            ),
+                            child: Text(
+                              '💮 行ったよ！ ${spot.visitedDate} (${"★" * spot.visitedRating})',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.deepOrange.shade900,
+                              ),
+                            ),
+                          ),
                         Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 10, vertical: 4),
@@ -340,6 +395,43 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               ),
               const SizedBox(height: 10),
 
+              // 💮 行ったよ！思い出メモ（記録済みの場合に表示）
+              if (spot.isVisited) ...[
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.deepOrange.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.deepOrange.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      const Text('💮', style: TextStyle(fontSize: 20)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          spot.visitedMemory.isEmpty
+                              ? '家族でお出かけ達成！（${spot.visitedDate}）'
+                              : '思い出（${spot.visitedDate}）: ${spot.visitedMemory}',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.deepOrange.shade900,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () =>
+                            _showVisitedStampDialog(context, spot),
+                        child: const Text('編集'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
               // 夫婦のひとことメモ欄
               Container(
                 width: double.infinity,
@@ -385,34 +477,51 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                     onPressed: () async {
                       final uri = Uri.parse(spot.officialWebUrl);
                       if (await canLaunchUrl(uri)) {
-                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                        await launchUrl(uri,
+                            mode: LaunchMode.externalApplication);
                       }
                     },
                     style: OutlinedButton.styleFrom(
                       visualDensity: VisualDensity.compact,
                       foregroundColor: colorScheme.primary,
-                      side: BorderSide(color: colorScheme.primary.withValues(alpha: 0.5)),
+                      side: BorderSide(
+                          color: colorScheme.primary.withValues(alpha: 0.5)),
                     ),
                     icon: const Icon(Icons.open_in_new, size: 16),
                     label: Text(
-                      spot.url.isNotEmpty ? '🌐 公式・元記事を見る（外部ブラウザ）' : '🔍 Webで最新情報を検索',
-                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
+                      spot.url.isNotEmpty
+                          ? '🌐 ${spot.sourceBadgeLabel}の元記事・公式を見る'
+                          : '🔍 Webで最新情報を検索',
+                      style: const TextStyle(
+                          fontSize: 12.5, fontWeight: FontWeight.bold),
                     ),
                   ),
                 ),
               ),
 
-              // LINE共有＆ステータス変更ボタン
+              // 💮行ったよスタンプ ＆ 設定・メモ ＆ LINE共有ボタン
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () => _showEditFavoriteDialog(context, spot),
-                      icon: const Icon(Icons.people_alt_outlined, size: 18),
-                      label: const Text('設定・メモ'),
+                      onPressed: () => _showVisitedStampDialog(context, spot),
+                      icon: const Text('💮', style: TextStyle(fontSize: 14)),
+                      label: Text(
+                        spot.isVisited ? '思い出編集' : '行ったよ！',
+                        style: const TextStyle(fontSize: 12),
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _showEditFavoriteDialog(context, spot),
+                      icon: const Icon(Icons.people_alt_outlined, size: 16),
+                      label:
+                          const Text('設定・メモ', style: TextStyle(fontSize: 12)),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
                   Expanded(
                     child: FilledButton.tonalIcon(
                       onPressed: () async {
@@ -428,8 +537,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                           ),
                         );
                       },
-                      icon: const Icon(Icons.share, size: 18),
-                      label: const Text('LINEで共有'),
+                      icon: const Icon(Icons.share, size: 16),
+                      label:
+                          const Text('LINE共有', style: TextStyle(fontSize: 12)),
                     ),
                   ),
                 ],
@@ -438,6 +548,197 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// 💮 行ったよ！思い出スタンプ登録・編集ダイアログ（案C）
+  void _showVisitedStampDialog(BuildContext context, OutingSpot spot) {
+    final now = DateTime.now();
+    final defaultDate = spot.visitedDate.isNotEmpty
+        ? spot.visitedDate
+        : '${now.year}/${now.month}/${now.day}';
+    final dateCtrl = TextEditingController(text: defaultDate);
+    final memoryCtrl = TextEditingController(text: spot.visitedMemory);
+    int rating = spot.visitedRating.clamp(1, 5);
+    bool isVisited = true;
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text('💮「${spot.title}」行ったよスタンプ'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('💮 行ったよ！スタンプを押す',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      value: isVisited,
+                      onChanged: (v) => setDialogState(() => isVisited = v),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: dateCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'お出かけした日',
+                        hintText: '例: 2026/11/08',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('家族の満足度:',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(5, (idx) {
+                        final starVal = idx + 1;
+                        return IconButton(
+                          onPressed: () =>
+                              setDialogState(() => rating = starVal),
+                          icon: Icon(
+                            starVal <= rating ? Icons.star : Icons.star_border,
+                            color: Colors.amber.shade700,
+                            size: 32,
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: memoryCtrl,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: '家族の思い出ひとことメモ',
+                        hintText: '例：アスレチックが最高！帰りに寄った温泉も気持ちよかった♨️',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(),
+                  child: const Text('キャンセル'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final updated = spot.copyWith(
+                      isVisited: isVisited,
+                      visitedDate: isVisited ? dateCtrl.text.trim() : '',
+                      visitedRating: rating,
+                      visitedMemory: isVisited ? memoryCtrl.text.trim() : '',
+                    );
+                    if (widget.onUpdateVisitedSpot != null) {
+                      widget.onUpdateVisitedSpot!(updated);
+                    }
+                    Navigator.of(dialogCtx).pop();
+                  },
+                  child: const Text('スタンプを保存'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// 🎰 お気に入り候補の中からおみくじルーレット抽選（案D）
+  void _showFavoritesRouletteDialog(BuildContext context) {
+    final candidates =
+        widget.favoriteSpots.where((s) => !s.isVisited).toList();
+    final pool = candidates.isNotEmpty ? candidates : widget.favoriteSpots;
+    if (pool.isEmpty) return;
+
+    final rng = Random();
+    OutingSpot picked = pool[rng.nextInt(pool.length)];
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Text('🎰 ', style: TextStyle(fontSize: 24)),
+                  Expanded(child: Text('週末どこ行く？ルーレット！')),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    '夫婦の行きたい候補から選ばれた今週末の行き先は…',
+                    style: TextStyle(fontSize: 12.5),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.orange.shade50,
+                          Colors.amber.shade100,
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.orange.shade300),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(picked.category.icon,
+                            style: const TextStyle(fontSize: 36)),
+                        const SizedBox(height: 6),
+                        Text(
+                          picked.title,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '📍 ${picked.address}（${picked.driveTimeLabel}）',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                OutlinedButton.icon(
+                  onPressed: () {
+                    setDialogState(() {
+                      picked = pool[rng.nextInt(pool.length)];
+                    });
+                  },
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('もう一度回す！'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.of(dialogCtx).pop();
+                    widget.onOpenSpotDetail(picked);
+                  },
+                  child: const Text('詳細を見る'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -527,7 +828,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'ご夫婦の2台のAndroidスマホで同じ「合言葉」を設定すると、どちらかが追加した候補やメモが自動でリアルタイム同期されます。',
+                'ご夫婦の2台のAndroidスマホで同じ「合言葉」を設定すると、どちらかが追加した候補や旅のしおり・思い出スタンプが自動でリアルタイム同期されます。',
                 style: TextStyle(fontSize: 13),
               ),
               const SizedBox(height: 12),

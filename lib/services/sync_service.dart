@@ -1,4 +1,4 @@
-// 夫婦間のリアルタイム共有・同期サービス
+// 夫婦間のリアルタイム共有・同期サービス（お気に入り・行ったよスタンプ・旅のしおり対応）
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -9,6 +9,8 @@ import '../models/outing_spot.dart';
 class CoupleSyncService {
   static const String _prefRoomKey = 'couple_room_code';
   static const String _prefFavoritesKey = 'couple_favorites_json';
+  static const String _prefTripsKey = 'couple_trips_json';
+  static const String _prefTripsUpdatedAtKey = 'couple_trips_updated_at';
   static const String _prefLastSyncKey = 'couple_last_sync_time';
   static const String _prefLocalUpdatedAtKey = 'couple_local_updated_at';
 
@@ -48,6 +50,134 @@ class CoupleSyncService {
     } catch (e) {
       debugPrint('お気に入り読み込みエラー: $e');
       return [];
+    }
+  }
+
+  /// 旅のしおり一覧をローカルストレージに保存する
+  static Future<void> saveLocalTrips(List<TripPlan> trips) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonList = trips.map((t) => t.toJson()).toList();
+    await prefs.setString(_prefTripsKey, jsonEncode(jsonList));
+  }
+
+  /// 旅のしおり一覧をローカルから読み込む（初回は大阪・名古屋家族旅行しおりを自動用意）
+  static Future<List<TripPlan>> loadLocalTrips() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString(_prefTripsKey);
+    if (jsonStr == null || jsonStr.isEmpty) {
+      final starter = [TripPlan.createOsakaNagoyaStarter()];
+      await saveLocalTrips(starter);
+      return starter;
+    }
+    try {
+      final list = jsonDecode(jsonStr) as List<dynamic>;
+      final trips = list
+          .map((item) => TripPlan.fromJson(item as Map<String, dynamic>))
+          .toList();
+      if (trips.isEmpty) {
+        return [TripPlan.createOsakaNagoyaStarter()];
+      }
+      return trips;
+    } catch (e) {
+      debugPrint('旅のしおり読み込みエラー: $e');
+      return [TripPlan.createOsakaNagoyaStarter()];
+    }
+  }
+
+  /// 旅のしおりをクラウドへプッシュ（夫婦間で同期）
+  static Future<void> pushTripsToCloud({
+    required String roomCode,
+    required List<TripPlan> trips,
+  }) async {
+    final sanitizedCode =
+        roomCode.trim().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    if (sanitizedCode.isEmpty) return;
+
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_prefTripsUpdatedAtKey, nowMs);
+    await saveLocalTrips(trips);
+
+    final payload = {
+      'v': 1,
+      'timestamp': nowMs,
+      'trips': trips.map((t) => t.toJson()).toList(),
+    };
+    final jsonStr = jsonEncode(payload);
+
+    final cdnTopic = 'weekend_outing_trips_$sanitizedCode';
+    try {
+      final cdnPostUrl = Uri.parse('https://ntfy.sh/$cdnTopic');
+      await http
+          .post(
+            cdnPostUrl,
+            headers: {'Title': 'CoupleTripsSync'},
+            body: jsonStr,
+          )
+          .timeout(const Duration(seconds: 4));
+    } catch (e) {
+      debugPrint('しおりCDNプッシュ注意: $e');
+    }
+  }
+
+  /// 旅のしおりをクラウドからプルして最新状態を反映
+  static Future<List<TripPlan>> pullTripsFromCloud({
+    required String roomCode,
+    required List<TripPlan> currentLocal,
+  }) async {
+    final sanitizedCode =
+        roomCode.trim().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    if (sanitizedCode.isEmpty) return currentLocal;
+
+    final prefs = await SharedPreferences.getInstance();
+    final localUpdatedAt = prefs.getInt(_prefTripsUpdatedAtKey) ?? 0;
+
+    int cloudTimestamp = 0;
+    List<TripPlan>? cloudTrips;
+
+    final cdnTopic = 'weekend_outing_trips_$sanitizedCode';
+    final cdnPollUrl = Uri.parse('https://ntfy.sh/$cdnTopic/json?poll=1');
+    try {
+      final cdnRes =
+          await http.get(cdnPollUrl).timeout(const Duration(seconds: 4));
+      if (cdnRes.statusCode == 200 && cdnRes.body.isNotEmpty) {
+        final lines = cdnRes.body.split('\n');
+        for (final line in lines.reversed) {
+          final trimmed = line.trim();
+          if (trimmed.isEmpty) continue;
+          try {
+            final obj = jsonDecode(trimmed) as Map<String, dynamic>;
+            if (obj['event'] == 'message' && obj['message'] != null) {
+              final msgStr = obj['message'] as String;
+              final parsed = jsonDecode(msgStr);
+              if (parsed is Map<String, dynamic>) {
+                cloudTimestamp = (parsed['timestamp'] as num?)?.toInt() ?? 0;
+                final rawTrips = parsed['trips'] as List<dynamic>? ?? [];
+                cloudTrips = rawTrips
+                    .map((item) =>
+                        TripPlan.fromJson(item as Map<String, dynamic>))
+                    .toList();
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      debugPrint('しおりCDN取得注意: $e');
+    }
+
+    if (cloudTrips == null || cloudTrips.isEmpty) {
+      return currentLocal;
+    }
+
+    if (cloudTimestamp >= localUpdatedAt) {
+      await saveLocalTrips(cloudTrips);
+      await prefs.setInt(_prefTripsUpdatedAtKey, cloudTimestamp);
+      return cloudTrips;
+    } else {
+      await pushTripsToCloud(roomCode: roomCode, trips: currentLocal);
+      return currentLocal;
     }
   }
 
@@ -304,6 +434,10 @@ class CoupleSyncService {
       'n': spot.coupleNote,
       'd': spot.driveMinutes,
       'km': spot.distanceKm,
+      'v': spot.isVisited ? 1 : 0,
+      'vd': spot.visitedDate,
+      'vr': spot.visitedRating,
+      'vm': spot.visitedMemory,
     };
   }
 
@@ -337,6 +471,10 @@ class CoupleSyncService {
       isFavorite: true,
       pickedBy: pick,
       coupleNote: json['n'] as String? ?? '',
+      isVisited: (json['v'] as int? ?? 0) == 1,
+      visitedDate: json['vd'] as String? ?? '',
+      visitedRating: (json['vr'] as int?) ?? 5,
+      visitedMemory: json['vm'] as String? ?? '',
     );
   }
 
@@ -354,11 +492,16 @@ class CoupleSyncService {
     for (var i = 0; i < favorites.length; i++) {
       final spot = favorites[i];
       final pickLabel = spot.pickedBy?.label ?? '2人とも';
-      buffer.writeln('${i + 1}. ${spot.title}');
+      final visitedBadge = spot.isVisited ? ' 💮[行ったよ！]' : '';
+      buffer.writeln('${i + 1}. ${spot.title}$visitedBadge');
       buffer.writeln('   📍 ${spot.address}');
       buffer.writeln('   🙋 担当: $pickLabel');
       if (spot.coupleNote.isNotEmpty) {
         buffer.writeln('   💬 メモ: ${spot.coupleNote}');
+      }
+      if (spot.isVisited && spot.visitedMemory.isNotEmpty) {
+        buffer.writeln(
+            '   💮 思い出(${spot.visitedDate} ★${spot.visitedRating}): ${spot.visitedMemory}');
       }
       buffer.writeln(
           '   🗺️ 地図: https://maps.google.com/?q=${spot.latitude},${spot.longitude}');

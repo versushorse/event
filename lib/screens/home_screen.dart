@@ -9,7 +9,9 @@ import '../services/gemini_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/weather_service.dart';
+import 'dart:math';
 import 'favorites_screen.dart';
+import 'trip_planner_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -24,6 +26,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// 現在のボトムナビタブ番号（0: 探す, 1: ドライブ地図, 2: 夫婦の行きたい）
   int _currentTabIndex = 0;
+
+  /// 雨の日・寒い日安心モード（案B：天候連動スイッチ）
+  bool _isRainOrColdMode = false;
+
+  /// 家族の旅のしおり一覧（案A：大阪・名古屋旅行＆週末ドライブ）
+  List<TripPlan> _tripPlans = [TripPlan.createOsakaNagoyaStarter()];
+  int _selectedTripIndex = 0;
 
   /// 出発エリア名
   String _departureArea = '現在地を取得中...';
@@ -322,6 +331,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _initCoupleSync() async {
     final code = await CoupleSyncService.getRoomCode();
     var savedFavs = await CoupleSyncService.loadLocalFavorites();
+    final savedTrips = await CoupleSyncService.loadLocalTrips();
+    if (mounted) {
+      setState(() => _tripPlans = savedTrips);
+    }
 
     final prefs = await SharedPreferences.getInstance();
     final hasClearedDefault = prefs.getBool('cleared_default_favs_v3') ?? false;
@@ -351,6 +364,10 @@ class _HomeScreenState extends State<HomeScreen> {
               isFavorite: true,
               pickedBy: saved.pickedBy,
               coupleNote: saved.coupleNote,
+              isVisited: saved.isVisited,
+              visitedDate: saved.visitedDate,
+              visitedRating: saved.visitedRating,
+              visitedMemory: saved.visitedMemory,
             );
           }
           return spot;
@@ -386,6 +403,10 @@ class _HomeScreenState extends State<HomeScreen> {
               isFavorite: true,
               pickedBy: cloudSpot.pickedBy,
               coupleNote: cloudSpot.coupleNote,
+              isVisited: cloudSpot.isVisited,
+              visitedDate: cloudSpot.visitedDate,
+              visitedRating: cloudSpot.visitedRating,
+              visitedMemory: cloudSpot.visitedMemory,
             );
           } else {
             return spot.copyWith(isFavorite: false);
@@ -404,6 +425,15 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _syncStatusLabel = lastSync;
     });
+
+    // 旅のしおりもクラウド同期
+    final syncedTrips = await CoupleSyncService.pullTripsFromCloud(
+      roomCode: _coupleRoomCode,
+      currentLocal: _tripPlans,
+    );
+    if (mounted) {
+      setState(() => _tripPlans = syncedTrips);
+    }
 
     // クラウド受信後に夫婦の好みを再分析
     _fetchCoupleAiInsight();
@@ -446,6 +476,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_selectedCategory != null &&
           spot.category != _selectedCategory &&
           spot.id != _anchorSpot?.id) {
+        return false;
+      }
+      if (_isRainOrColdMode && !spot.isRainOrColdFriendly) {
         return false;
       }
       if (_selectedTag != null && !spot.tags.contains(_selectedTag)) {
@@ -879,6 +912,425 @@ class _HomeScreenState extends State<HomeScreen> {
     _fetchCoupleAiInsight();
   }
 
+  /// 💮 行ったよ！思い出スタンプを更新してクラウドへ保存する（案C）
+  Future<void> _updateVisitedSpot(OutingSpot updated) async {
+    setState(() {
+      _allSpots = _allSpots.map((spot) {
+        if (spot.id != updated.id) return spot;
+        return updated.copyWith(
+          isFavorite: true,
+          pickedBy: updated.pickedBy ?? PartnerPick.both,
+        );
+      }).toList();
+    });
+
+    await CoupleSyncService.pushToCloud(
+      roomCode: _coupleRoomCode,
+      favorites: _favoriteSpots,
+    );
+    final lastSync = await CoupleSyncService.getLastSyncLabel();
+    if (mounted) {
+      setState(() => _syncStatusLabel = lastSync);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            updated.isVisited
+                ? '💮「${updated.title}」に『行ったよ！』スタンプを押しました！'
+                : '「${updated.title}」のスタンプを解除しました',
+          ),
+        ),
+      );
+    }
+    _fetchCoupleAiInsight();
+  }
+
+  /// 旅のしおりリストを更新してクラウド同期する（案A）
+  Future<void> _updateTripPlans(List<TripPlan> updatedTrips) async {
+    setState(() {
+      _tripPlans = updatedTrips;
+      if (_selectedTripIndex >= _tripPlans.length) {
+        _selectedTripIndex = (_tripPlans.length - 1).clamp(0, 99);
+      }
+    });
+    await CoupleSyncService.pushTripsToCloud(
+      roomCode: _coupleRoomCode,
+      trips: updatedTrips,
+    );
+  }
+
+  /// 選んだスポットを軸に「1日ドライブコースしおり」を自動作成してしおりタブを開く（案A）
+  void _createDayDrivePlanFromSpot(OutingSpot spot) {
+    final plan = GeminiOutingService.buildDayDrivePlanFromSpot(
+      mainSpot: spot,
+      regionalSpots: _allSpots,
+    );
+    final updated = List<TripPlan>.from(_tripPlans)..insert(0, plan);
+    _updateTripPlans(updated);
+    setState(() {
+      _selectedTripIndex = 0;
+      _currentTabIndex = 3;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '🚗「${spot.title}」の1日ドライブコースしおりを作成しました！自由に編集できます',
+        ),
+      ),
+    );
+  }
+
+  /// 現在の旅のしおりにスポットを1件追加する（案A）
+  void _addSpotToCurrentTripPlan(OutingSpot spot) {
+    final current = _tripPlans.isNotEmpty
+        ? _tripPlans[_selectedTripIndex.clamp(0, _tripPlans.length - 1)]
+        : TripPlan.createOsakaNagoyaStarter();
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final newItem = TripScheduleItem(
+      id: 'spot_${nowMs}_${spot.id}',
+      dayNumber: 1,
+      timeText: '11:00',
+      title: spot.title,
+      type: spot.category == SpotCategory.dining ||
+              spot.category == SpotCategory.gourmet
+          ? TripItemType.food
+          : spot.category == SpotCategory.onsen
+              ? TripItemType.hotel
+              : TripItemType.sightseeing,
+      location: spot.address,
+      memo: spot.subtitle,
+      url: spot.url,
+    );
+    final updatedPlan = current.copyWith(
+      items: [...current.items, newItem],
+    );
+    final list = List<TripPlan>.from(_tripPlans);
+    if (list.isEmpty) {
+      list.add(updatedPlan);
+    } else {
+      list[_selectedTripIndex.clamp(0, list.length - 1)] = updatedPlan;
+    }
+    _updateTripPlans(list);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('📒「${current.title}」に「${spot.title}」を追加しました！'),
+        action: SnackBarAction(
+          label: 'しおりを見る',
+          onPressed: () => setState(() => _currentTabIndex = 3),
+        ),
+      ),
+    );
+  }
+
+  /// 🎰 迷ったときの「週末どこ行く？おみくじルーレット」ダイアログ（案D）
+  void _showExploreRouletteDialog(BuildContext context) {
+    final pool = _filteredSpots.isNotEmpty ? _filteredSpots : _allSpots;
+    if (pool.isEmpty) return;
+    final rng = Random();
+    OutingSpot picked = pool[rng.nextInt(pool.length)];
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Text('🎰 ', style: TextStyle(fontSize: 24)),
+                  Expanded(child: Text('週末どこ行く？おみくじルーレット')),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '現在の候補（${pool.length}件）から抽選されたおすすめスポットは…',
+                    style: const TextStyle(fontSize: 12.5),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.orange.shade50,
+                          Colors.amber.shade100,
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.orange.shade300),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(picked.category.icon,
+                            style: const TextStyle(fontSize: 38)),
+                        const SizedBox(height: 6),
+                        Text(
+                          picked.title,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          picked.subtitle,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 12.5),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '🚗 ${picked.driveTimeLabel} ｜ 📍 ${picked.address}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                OutlinedButton.icon(
+                  onPressed: () {
+                    setDialogState(() {
+                      picked = pool[rng.nextInt(pool.length)];
+                    });
+                  },
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('もう一度回す！'),
+                ),
+                FilledButton.icon(
+                  onPressed: () {
+                    Navigator.of(dialogCtx).pop();
+                    _showSpotDetailSheet(this.context, picked);
+                  },
+                  icon: const Icon(Icons.celebration, size: 18),
+                  label: const Text('ここを詳しく見る'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// 🌲 スポット単体の TimeTree ＆ Googleカレンダー連携シート（案E）
+  void _showSpotCalendarAndTimeTreeSheet(
+    BuildContext context,
+    OutingSpot spot,
+  ) {
+    DateTime selectedDate = _targetDateRange.start;
+
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final dateStr =
+                '${selectedDate.year}/${selectedDate.month}/${selectedDate.day}';
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '🌲「${spot.title}」をTimeTree・カレンダーへ登録',
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(Icons.calendar_today, size: 18),
+                      const SizedBox(width: 8),
+                      Text('お出かけ予定日: $dateStr',
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: selectedDate,
+                            firstDate: DateTime.now()
+                                .subtract(const Duration(days: 7)),
+                            lastDate:
+                                DateTime.now().add(const Duration(days: 365)),
+                          );
+                          if (picked != null) {
+                            setSheetState(() => selectedDate = picked);
+                          }
+                        },
+                        child: const Text('日付変更'),
+                      ),
+                    ],
+                  ),
+                  const Divider(),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const CircleAvatar(
+                      backgroundColor: Color(0xFFE8F5E9),
+                      child: Text('🌲', style: TextStyle(fontSize: 20)),
+                    ),
+                    title: const Text(
+                      '① TimeTree用に予定メモをコピー',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                    subtitle: const Text(
+                      '場所・所要時間・駐車場・URLを綺麗にコピーし、TimeTreeにそのままペーストできます',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    trailing: FilledButton.tonal(
+                      onPressed: () {
+                        Clipboard.setData(
+                            ClipboardData(text: spot.toTimeTreeCopyText()));
+                        Navigator.of(sheetCtx).pop();
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                                '🌲 TimeTree用にコピーしました！TimeTreeアプリにそのまま貼り付けできます'),
+                          ),
+                        );
+                      },
+                      child: const Text('コピー'),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const CircleAvatar(
+                      backgroundColor: Color(0xFFE3F2FD),
+                      child: Text('📅', style: TextStyle(fontSize: 20)),
+                    ),
+                    title: const Text(
+                      '② Googleカレンダーに登録（TimeTree連携対応）',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                    subtitle: const Text(
+                      'TimeTreeの「OSカレンダーを表示」をONにしていれば、登録するとTimeTreeにも自動表示されます！',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    trailing: FilledButton(
+                      onPressed: () {
+                        final calUrl = spot.toGoogleCalendarUrl(selectedDate);
+                        Navigator.of(sheetCtx).pop();
+                        _launchWebUrl(calUrl);
+                      },
+                      child: const Text('登録する'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// 💮 ホーム・詳細シートからワンタップで「行ったよ！」スタンプを押すダイアログ（案C）
+  void _showQuickVisitedDialog(BuildContext context, OutingSpot spot) {
+    final now = DateTime.now();
+    final defaultDate = spot.visitedDate.isNotEmpty
+        ? spot.visitedDate
+        : '${now.year}/${now.month}/${now.day}';
+    final dateCtrl = TextEditingController(text: defaultDate);
+    final memoryCtrl = TextEditingController(text: spot.visitedMemory);
+    int rating = spot.visitedRating.clamp(1, 5);
+    bool isVisited = true;
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text('💮「${spot.title}」行ったよ記録'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('💮 行ったよ！スタンプを押す',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      value: isVisited,
+                      onChanged: (v) => setDialogState(() => isVisited = v),
+                    ),
+                    TextField(
+                      controller: dateCtrl,
+                      decoration: const InputDecoration(
+                        labelText: '行った日',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text('家族の満足度:',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(5, (idx) {
+                        final starVal = idx + 1;
+                        return IconButton(
+                          onPressed: () =>
+                              setDialogState(() => rating = starVal),
+                          icon: Icon(
+                            starVal <= rating ? Icons.star : Icons.star_border,
+                            color: Colors.amber.shade700,
+                            size: 30,
+                          ),
+                        );
+                      }),
+                    ),
+                    TextField(
+                      controller: memoryCtrl,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: '思い出ひとことメモ（任意）',
+                        hintText: '例: 子どもがすごく楽しそうだった！また来年も行きたい',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(),
+                  child: const Text('キャンセル'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final updated = spot.copyWith(
+                      isVisited: isVisited,
+                      visitedDate: isVisited ? dateCtrl.text.trim() : '',
+                      visitedRating: rating,
+                      visitedMemory: isVisited ? memoryCtrl.text.trim() : '',
+                    );
+                    _updateVisitedSpot(updated);
+                    Navigator.of(dialogCtx).pop();
+                  },
+                  child: const Text('保存する'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   /// 外部Googleマップアプリを起動してナビを開始する
   Future<void> _launchGoogleMaps(OutingSpot spot) async {
     final uri = Uri.parse(spot.googleMapsUrl);
@@ -918,7 +1370,17 @@ class _HomeScreenState extends State<HomeScreen> {
         surfaceTintColor: colorScheme.surfaceTint,
         title: Row(
           children: [
-            const Text('🚗 ', style: TextStyle(fontSize: 22)),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset(
+                'assets/images/app_icon.png',
+                width: 30,
+                height: 30,
+                errorBuilder: (_, _, _) =>
+                    const Text('🚗 ', style: TextStyle(fontSize: 22)),
+              ),
+            ),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -973,8 +1435,17 @@ class _HomeScreenState extends State<HomeScreen> {
               _triggerCloudSync();
             },
             onUpdateFavorite: _updateFavoriteDetail,
+            onUpdateVisitedSpot: _updateVisitedSpot,
             onRemoveFavorite: _toggleFavorite,
             onOpenSpotDetail: (spot) => _showSpotDetailSheet(context, spot),
+          ),
+          TripPlannerScreen(
+            tripPlans: _tripPlans,
+            selectedTripIndex: _selectedTripIndex,
+            onSelectTrip: (idx) => setState(() => _selectedTripIndex = idx),
+            onUpdateTrips: _updateTripPlans,
+            coupleRoomCode: _coupleRoomCode,
+            onTriggerSync: _triggerCloudSync,
           ),
         ],
       ),
@@ -1003,8 +1474,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 LatLng(_selectedMapSpot!.latitude, _selectedMapSpot!.longitude),
               ),
             );
-          } else if (index == 2) {
-            // 「夫婦の行きたい！」タブを開いたときに自動で最新同期を取得
+          } else if (index == 2 || index == 3) {
+            // 「夫婦の行きたい！」または「旅のしおり」タブを開いたときに自動で最新同期を取得
             _triggerCloudSync();
           }
         },
@@ -1031,6 +1502,19 @@ class _HomeScreenState extends State<HomeScreen> {
               child: const Icon(Icons.favorite),
             ),
             label: '夫婦の行きたい！',
+          ),
+          NavigationDestination(
+            icon: Badge(
+              isLabelVisible: _tripPlans.isNotEmpty,
+              label: Text('${_tripPlans.length}'),
+              child: const Icon(Icons.event_note_outlined),
+            ),
+            selectedIcon: Badge(
+              isLabelVisible: _tripPlans.isNotEmpty,
+              label: Text('${_tripPlans.length}'),
+              child: const Icon(Icons.event_note),
+            ),
+            label: '旅のしおり',
           ),
         ],
       ),
@@ -1207,6 +1691,39 @@ class _HomeScreenState extends State<HomeScreen> {
                         backgroundColor:
                             colorScheme.primaryContainer.withValues(alpha: 0.4),
                         onPressed: () => _showDateRangeSelectorSheet(context),
+                      ),
+                      const SizedBox(width: 6),
+                      FilterChip(
+                        avatar: const Text('☔', style: TextStyle(fontSize: 13)),
+                        label: const Text('雨・寒い日安心モード',
+                            style: TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold)),
+                        selected: _isRainOrColdMode,
+                        selectedColor: Colors.lightBlue.shade100,
+                        visualDensity: VisualDensity.compact,
+                        onSelected: (val) {
+                          setState(() => _isRainOrColdMode = val);
+                        },
+                      ),
+                      const SizedBox(width: 6),
+                      ActionChip(
+                        avatar: const Text('🎰', style: TextStyle(fontSize: 13)),
+                        label: const Text('おみくじルーレット',
+                            style: TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold)),
+                        backgroundColor: Colors.amber.shade50,
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => _showExploreRouletteDialog(context),
+                      ),
+                      const SizedBox(width: 6),
+                      ActionChip(
+                        avatar: const Text('📒', style: TextStyle(fontSize: 13)),
+                        label: const Text('大阪・名古屋 / 旅のしおり',
+                            style: TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold)),
+                        backgroundColor: Colors.orange.shade50,
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => setState(() => _currentTabIndex = 3),
                       ),
                       const SizedBox(width: 6),
                       FilterChip(
@@ -1705,6 +2222,25 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                         ),
+                        if (spot.isVisited)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.shade100,
+                              borderRadius: BorderRadius.circular(20),
+                              border:
+                                  Border.all(color: Colors.deepOrange.shade300),
+                            ),
+                            child: Text(
+                              '💮 行ったよ！(${"★" * spot.visitedRating})',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.deepOrange.shade900,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -1889,6 +2425,53 @@ class _HomeScreenState extends State<HomeScreen> {
                           TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                     ),
                   ),
+                ),
+              ),
+
+              // 便利アクションチップ（1日しおり作成 / しおり追加 / TimeTree・カレンダー / 行ったよ！）
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    ActionChip(
+                      avatar: const Text('🚗', style: TextStyle(fontSize: 12)),
+                      label: const Text('1日ドライブしおり作成',
+                          style: TextStyle(
+                              fontSize: 11.5, fontWeight: FontWeight.bold)),
+                      backgroundColor: Colors.orange.shade50,
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _createDayDrivePlanFromSpot(spot),
+                    ),
+                    ActionChip(
+                      avatar: const Text('📋', style: TextStyle(fontSize: 12)),
+                      label: const Text('しおりに追加',
+                          style: TextStyle(fontSize: 11.5)),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _addSpotToCurrentTripPlan(spot),
+                    ),
+                    ActionChip(
+                      avatar: const Text('🌲', style: TextStyle(fontSize: 12)),
+                      label: const Text('TimeTree・カレンダー',
+                          style: TextStyle(fontSize: 11.5)),
+                      backgroundColor: Colors.teal.shade50,
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () =>
+                          _showSpotCalendarAndTimeTreeSheet(context, spot),
+                    ),
+                    ActionChip(
+                      avatar: const Text('💮', style: TextStyle(fontSize: 12)),
+                      label: Text(
+                        spot.isVisited ? '行ったよ編集' : '行ったよ！記録',
+                        style: const TextStyle(fontSize: 11.5),
+                      ),
+                      backgroundColor:
+                          spot.isVisited ? Colors.orange.shade100 : null,
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _showQuickVisitedDialog(context, spot),
+                    ),
+                  ],
                 ),
               ),
 
@@ -2679,6 +3262,48 @@ class _HomeScreenState extends State<HomeScreen> {
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      ActionChip(
+                        avatar: const Text('🚗'),
+                        label: const Text('1日ドライブしおり作成',
+                            style: TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold)),
+                        backgroundColor: Colors.orange.shade50,
+                        onPressed: () {
+                          Navigator.of(sheetContext).pop();
+                          _createDayDrivePlanFromSpot(spot);
+                        },
+                      ),
+                      ActionChip(
+                        avatar: const Text('🌲'),
+                        label: const Text('TimeTree・カレンダー連携',
+                            style: TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold)),
+                        backgroundColor: Colors.teal.shade50,
+                        onPressed: () {
+                          Navigator.of(sheetContext).pop();
+                          _showSpotCalendarAndTimeTreeSheet(
+                              this.context, spot);
+                        },
+                      ),
+                      ActionChip(
+                        avatar: const Text('💮'),
+                        label: Text(
+                          spot.isVisited ? '行ったよスタンプ編集' : '行ったよ！スタンプ',
+                          style: const TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                        onPressed: () {
+                          Navigator.of(sheetContext).pop();
+                          _showQuickVisitedDialog(this.context, spot);
+                        },
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 10),
                   Row(

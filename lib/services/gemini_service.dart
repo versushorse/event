@@ -2831,6 +2831,296 @@ $candidateListText
       isFavorite: primary.isFavorite || secondary.isFavorite,
     );
   }
+
+  /// 選んだスポットを軸に、近くのランチ・温泉を組み合わせた「1日ドライブコースしおり」を自動生成（案A）
+  static TripPlan buildDayDrivePlanFromSpot({
+    required OutingSpot mainSpot,
+    required List<OutingSpot> regionalSpots,
+  }) {
+    OutingSpot? nearestLunch;
+    double minLunchDist = 99999;
+    OutingSpot? nearestOnsen;
+    double minOnsenDist = 99999;
+
+    for (final candidate in regionalSpots) {
+      if (candidate.id == mainSpot.id) continue;
+      final dist = LocationService.calculateDistanceKm(
+        startLat: mainSpot.latitude,
+        startLng: mainSpot.longitude,
+        endLat: candidate.latitude,
+        endLng: candidate.longitude,
+      );
+      if ((candidate.category == SpotCategory.dining ||
+              candidate.category == SpotCategory.gourmet) &&
+          dist < minLunchDist) {
+        minLunchDist = dist;
+        nearestLunch = candidate;
+      }
+      if (candidate.category == SpotCategory.onsen && dist < minOnsenDist) {
+        minOnsenDist = dist;
+        nearestOnsen = candidate;
+      }
+    }
+
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final items = <TripScheduleItem>[
+      TripScheduleItem(
+        id: 'drive_${nowMs}_1',
+        dayNumber: 1,
+        timeText: '09:30',
+        title: '自宅を出発 ➔ ${mainSpot.title}へ（${mainSpot.driveTimeLabel}）',
+        type: TripItemType.car,
+        location: mainSpot.address,
+        memo: '駐車場: ${mainSpot.parkingInfo}',
+      ),
+      TripScheduleItem(
+        id: 'drive_${nowMs}_2',
+        dayNumber: 1,
+        timeText: '10:30',
+        title: '${mainSpot.title} を家族で満喫！',
+        type: TripItemType.sightseeing,
+        location: mainSpot.address,
+        memo: mainSpot.recommendPoints.isNotEmpty
+            ? mainSpot.recommendPoints.first
+            : mainSpot.subtitle,
+        url: mainSpot.url,
+      ),
+      TripScheduleItem(
+        id: 'drive_${nowMs}_3',
+        dayNumber: 1,
+        timeText: '12:30',
+        title: nearestLunch != null
+            ? 'ランチ：${nearestLunch.title}'
+            : '${mainSpot.address}周辺のご当地グルメ・食事処でランチ',
+        type: TripItemType.food,
+        location: nearestLunch?.address ?? '${mainSpot.address}周辺',
+        memo: nearestLunch != null
+            ? '${nearestLunch.subtitle}（メイン会場から約${minLunchDist.toStringAsFixed(1)}km）'
+            : '名物グルメや道の駅で楽しいお昼ごはん🍽️',
+        url: nearestLunch?.url ?? '',
+      ),
+      TripScheduleItem(
+        id: 'drive_${nowMs}_4',
+        dayNumber: 1,
+        timeText: '14:30',
+        title: nearestOnsen != null
+            ? '立ち寄り湯：${nearestOnsen.title}'
+            : '${mainSpot.address}周辺の日帰り温泉でほっこり',
+        type: TripItemType.hotel,
+        location: nearestOnsen?.address ?? '${mainSpot.address}周辺',
+        memo: nearestOnsen != null
+            ? '${nearestOnsen.subtitle}（会場から約${minOnsenDist.toStringAsFixed(1)}km）'
+            : 'たくさん遊んだ後は露天風呂・温泉でリフレッシュ♨️',
+        url: nearestOnsen?.url ?? '',
+      ),
+      TripScheduleItem(
+        id: 'drive_${nowMs}_5',
+        dayNumber: 1,
+        timeText: '16:30',
+        title: 'お土産を買って帰路へ ➔ 自宅着',
+        type: TripItemType.car,
+        location: '帰路ドライブ',
+        memo: '安全運転で帰宅🏠',
+      ),
+    ];
+
+    return TripPlan(
+      id: 'trip_drive_$nowMs',
+      title: '🚗 ${mainSpot.title} 1日満喫コース',
+      subtitle: '移動時間・周辺ランチ・温泉つきの1日モデルスケジュール',
+      totalDays: 1,
+      items: items,
+      updatedAtMs: nowMs,
+    );
+  }
+
+  /// Gemini AI を使って、大阪・名古屋旅行など自由な行き先・日数の旅のしおりを自動生成（案A）
+  static Future<TripPlan> generateCustomTripPlanWithAi({
+    required String destinationAndTheme,
+    required int totalDays,
+  }) async {
+    final cleanTheme = destinationAndTheme.trim().isEmpty
+        ? '大阪・名古屋 家族旅行'
+        : destinationAndTheme.trim();
+    final days = totalDays.clamp(1, 5);
+    final apiKey = AppApiKeys.geminiApiKey.trim();
+
+    if (apiKey.isNotEmpty && apiKey != 'YOUR_GEMINI_API_KEY') {
+      final prompt = '''
+あなたは小学生の子どもがいるご夫婦・家族向けの旅行プランナーAIです。
+以下の条件で、家族みんなが楽しめて無理のない「旅のしおり（タイムスケジュール）」を作成してください。
+
+・行き先・やりたいこと: $cleanTheme
+・日数: $days日間（Day 1 〜 Day $days）
+・対象: ご夫婦＋小学生のお子さん
+
+必ず以下のJSONフォーマットのみを出力してください（コードブロック不要）：
+{
+  "title": "しおりのタイトル（絵文字付き、例：🏯 大阪・名古屋 家族旅行しおり）",
+  "subtitle": "プランの魅力ひとこと（例：USJもジブリパークも名古屋めしも満喫！）",
+  "items": [
+    {
+      "dayNumber": 1,
+      "timeText": "09:30",
+      "title": "予定のタイトル",
+      "type": "shinkansen または flight, train, car, sightseeing, food, hotel, shopping",
+      "location": "場所や駅・施設名",
+      "memo": "小学生や夫婦向けのワンポイントメモ"
+    }
+  ]
+}
+''';
+
+      final targetModels = [
+        'gemini-3.5-flash-lite',
+        'gemini-3.8-flash',
+        'gemini-2.5-flash',
+      ];
+
+      for (final model in targetModels) {
+        try {
+          final uri = Uri.parse(
+            'https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey',
+          );
+          final response = await http
+              .post(
+                uri,
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode({
+                  'contents': [
+                    {
+                      'parts': [
+                        {'text': prompt}
+                      ]
+                    }
+                  ],
+                  'generationConfig': {
+                    'responseMimeType': 'application/json',
+                    'maxOutputTokens': 1400,
+                  },
+                }),
+              )
+              .timeout(const Duration(seconds: 10));
+
+          if (response.statusCode == 200) {
+            final jsonResponse = jsonDecode(utf8.decode(response.bodyBytes));
+            final candidates = jsonResponse['candidates'] as List<dynamic>?;
+            if (candidates != null && candidates.isNotEmpty) {
+              final content =
+                  (candidates.first as Map<String, dynamic>)['content']
+                      as Map<String, dynamic>?;
+              final parts = content?['parts'] as List<dynamic>?;
+              if (parts != null && parts.isNotEmpty) {
+                final rawText =
+                    (parts.first as Map<String, dynamic>)['text'] as String?;
+                if (rawText != null) {
+                  final cleaned = rawText
+                      .replaceAll('```json', '')
+                      .replaceAll('```', '')
+                      .trim();
+                  final parsed = jsonDecode(cleaned) as Map<String, dynamic>;
+                  final title =
+                      parsed['title'] as String? ?? '✈️ $cleanTheme しおり';
+                  final subtitle =
+                      parsed['subtitle'] as String? ?? 'AI作成の家族旅行スケジュール';
+                  final rawItems = parsed['items'] as List<dynamic>? ?? [];
+                  final nowMs = DateTime.now().millisecondsSinceEpoch;
+                  final items = <TripScheduleItem>[];
+                  for (var i = 0; i < rawItems.length; i++) {
+                    final m = rawItems[i] as Map<String, dynamic>;
+                    items.add(
+                      TripScheduleItem(
+                        id: 'ai_${nowMs}_$i',
+                        dayNumber:
+                            ((m['dayNumber'] as num?)?.toInt() ?? 1).clamp(1, days),
+                        timeText: m['timeText'] as String? ?? '10:00',
+                        title: m['title'] as String? ?? 'お出かけ予定',
+                        type: TripItemType.fromName(m['type'] as String?),
+                        location: m['location'] as String? ?? '',
+                        memo: m['memo'] as String? ?? '',
+                      ),
+                    );
+                  }
+                  if (items.isNotEmpty) {
+                    return TripPlan(
+                      id: 'trip_ai_$nowMs',
+                      title: title,
+                      subtitle: subtitle,
+                      totalDays: days,
+                      items: items,
+                      updatedAtMs: nowMs,
+                    );
+                  }
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (cleanTheme.contains('大阪') || cleanTheme.contains('名古屋')) {
+      final starter = TripPlan.createOsakaNagoyaStarter();
+      return starter.copyWith(
+        id: 'trip_${DateTime.now().millisecondsSinceEpoch}',
+        title: '🏯 $cleanTheme',
+        totalDays: days,
+      );
+    }
+
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final fallbackItems = <TripScheduleItem>[];
+    for (int d = 1; d <= days; d++) {
+      fallbackItems.addAll([
+        TripScheduleItem(
+          id: 'fb_${nowMs}_${d}_1',
+          dayNumber: d,
+          timeText: '09:30',
+          title: d == 1 ? '出発 ➔ $cleanTheme エリアへ移動' : '$cleanTheme Day $d スタート！',
+          type: d == 1 ? TripItemType.shinkansen : TripItemType.car,
+          location: cleanTheme,
+          memo: '家族みんなで楽しい1日にしよう！',
+        ),
+        TripScheduleItem(
+          id: 'fb_${nowMs}_${d}_2',
+          dayNumber: d,
+          timeText: '11:00',
+          title: '$cleanTheme メイン観光・体験スポット',
+          type: TripItemType.sightseeing,
+          location: cleanTheme,
+          memo: '小学生も大人もワクワクするメインスポット🎡',
+        ),
+        TripScheduleItem(
+          id: 'fb_${nowMs}_${d}_3',
+          dayNumber: d,
+          timeText: '12:30',
+          title: '$cleanTheme 名物グルメ・ランチ',
+          type: TripItemType.food,
+          location: cleanTheme,
+          memo: '地元で人気のご当地グルメを堪能🍽️',
+        ),
+        TripScheduleItem(
+          id: 'fb_${nowMs}_${d}_4',
+          dayNumber: d,
+          timeText: d == days ? '16:00' : '17:30',
+          title: d == days ? 'お土産選び ➔ 帰路へ' : 'ホテル・温泉にチェックイン＆夕食',
+          type: d == days ? TripItemType.shopping : TripItemType.hotel,
+          location: cleanTheme,
+          memo: d == days ? '思い出とお土産をたくさん持って帰宅🏠' : 'ゆっくり休んで疲れを癒やす♨️',
+        ),
+      ]);
+    }
+
+    return TripPlan(
+      id: 'trip_custom_$nowMs',
+      title: '✈️ $cleanTheme（$days日間）',
+      subtitle: '自由に予定を追加・編集できる家族のしおり',
+      totalDays: days,
+      items: fallbackItems,
+      updatedAtMs: nowMs,
+      // end of generateCustomTripPlanWithAi
+    );
+  }
 }
 
 class _WalkerplusAreaTarget {

@@ -1,4 +1,4 @@
-// お出かけスポット・イベントのデータモデル定義
+// お出かけスポット・イベントおよび旅のしおりデータモデル定義
 
 /// 東北6県の地域タブ定義
 enum TohokuRegion {
@@ -100,6 +100,336 @@ enum PartnerPick {
   }
 }
 
+/// 旅のしおり・予定のアイコン種別（新幹線・飛行機・車・観光・グルメ・ホテルなど）
+enum TripItemType {
+  shinkansen('新幹線・特急', '🚄'),
+  flight('飛行機・空港', '✈️'),
+  train('電車・バス', '🚃'),
+  car('ドライブ・車移動', '🚗'),
+  sightseeing('観光・テーマパーク', '🎡'),
+  food('グルメ・食事・カフェ', '🍽️'),
+  hotel('ホテル・温泉・宿', '🏨'),
+  shopping('お土産・ショッピング', '🛍️'),
+  other('その他予定', '📌');
+
+  final String label;
+  final String icon;
+  const TripItemType(this.label, this.icon);
+
+  static TripItemType fromName(String? name) {
+    if (name == null) return TripItemType.sightseeing;
+    for (final t in TripItemType.values) {
+      if (t.name == name) return t;
+    }
+    return TripItemType.sightseeing;
+  }
+}
+
+/// 旅のしおりの1コマ分のスケジュール予定
+class TripScheduleItem {
+  final String id;
+  final int dayNumber; // 1 = Day 1, 2 = Day 2...
+  final String timeText; // 例: '09:30'
+  final String title; // 例: '新幹線で新大阪駅へ ➔ 海遊館'
+  final TripItemType type;
+  final String location; // 例: '大阪市港区海岸通'
+  final String memo; // 例: 'ジンベエザメを見る！チケット事前購入済み'
+  final String url;
+
+  const TripScheduleItem({
+    required this.id,
+    this.dayNumber = 1,
+    required this.timeText,
+    required this.title,
+    this.type = TripItemType.sightseeing,
+    this.location = '',
+    this.memo = '',
+    this.url = '',
+  });
+
+  TripScheduleItem copyWith({
+    String? id,
+    int? dayNumber,
+    String? timeText,
+    String? title,
+    TripItemType? type,
+    String? location,
+    String? memo,
+    String? url,
+  }) {
+    return TripScheduleItem(
+      id: id ?? this.id,
+      dayNumber: dayNumber ?? this.dayNumber,
+      timeText: timeText ?? this.timeText,
+      title: title ?? this.title,
+      type: type ?? this.type,
+      location: location ?? this.location,
+      memo: memo ?? this.memo,
+      url: url ?? this.url,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'dayNumber': dayNumber,
+        'timeText': timeText,
+        'title': title,
+        'type': type.name,
+        'location': location,
+        'memo': memo,
+        'url': url,
+      };
+
+  factory TripScheduleItem.fromJson(Map<String, dynamic> json) {
+    return TripScheduleItem(
+      id: json['id'] as String? ??
+          'item_${DateTime.now().microsecondsSinceEpoch}',
+      dayNumber: (json['dayNumber'] as num?)?.toInt() ?? 1,
+      timeText: json['timeText'] as String? ?? '10:00',
+      title: json['title'] as String? ?? '',
+      type: TripItemType.fromName(json['type'] as String?),
+      location: json['location'] as String? ?? '',
+      memo: json['memo'] as String? ?? '',
+      url: json['url'] as String? ?? '',
+    );
+  }
+}
+
+/// 家族の旅のしおり（大阪・名古屋などの旅行や週末1日ドライブコース）
+class TripPlan {
+  final String id;
+  final String title; // 例: '🏯 大阪・名古屋 家族旅行'
+  final String subtitle; // 例: '来週のお出かけしおり（小学生＆夫婦）'
+  final int totalDays; // 例: 3 (Day 1〜Day 3)
+  final List<TripScheduleItem> items;
+  final int updatedAtMs;
+
+  const TripPlan({
+    required this.id,
+    required this.title,
+    this.subtitle = '家族のお出かけスケジュール',
+    this.totalDays = 1,
+    required this.items,
+    required this.updatedAtMs,
+  });
+
+  TripPlan copyWith({
+    String? id,
+    String? title,
+    String? subtitle,
+    int? totalDays,
+    List<TripScheduleItem>? items,
+    int? updatedAtMs,
+  }) {
+    return TripPlan(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      subtitle: subtitle ?? this.subtitle,
+      totalDays: totalDays ?? this.totalDays,
+      items: items ?? this.items,
+      updatedAtMs: updatedAtMs ?? DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'subtitle': subtitle,
+        'totalDays': totalDays,
+        'items': items.map((i) => i.toJson()).toList(),
+        'updatedAtMs': updatedAtMs,
+      };
+
+  factory TripPlan.fromJson(Map<String, dynamic> json) {
+    final rawItems = json['items'] as List<dynamic>? ?? [];
+    return TripPlan(
+      id: json['id'] as String? ??
+          'trip_${DateTime.now().millisecondsSinceEpoch}',
+      title: json['title'] as String? ?? '家族のお出かけしおり',
+      subtitle: json['subtitle'] as String? ?? '',
+      totalDays: (json['totalDays'] as num?)?.toInt() ?? 1,
+      items: rawItems
+          .map((e) => TripScheduleItem.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      updatedAtMs: (json['updatedAtMs'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// LINEやTimeTreeにそのまま貼り付けられる共有テキストを生成
+  String toShareText() {
+    final buf = StringBuffer();
+    buf.writeln('📒【旅のしおり】$title');
+    if (subtitle.isNotEmpty) {
+      buf.writeln('✨ $subtitle');
+    }
+    buf.writeln('━━━━━━━━━━━━━━');
+    for (int d = 1; d <= totalDays; d++) {
+      final dayItems = items.where((i) => i.dayNumber == d).toList();
+      buf.writeln('\n📅【Day $d】');
+      if (dayItems.isEmpty) {
+        buf.writeln('  （予定なし）');
+      } else {
+        for (final item in dayItems) {
+          buf.writeln('⏰ ${item.timeText}  ${item.type.icon} ${item.title}');
+          if (item.location.isNotEmpty) {
+            buf.writeln('   📍 ${item.location}');
+          }
+          if (item.memo.isNotEmpty) {
+            buf.writeln('   💬 ${item.memo}');
+          }
+          if (item.url.isNotEmpty) {
+            buf.writeln('   🌐 ${item.url}');
+          }
+        }
+      }
+    }
+    return buf.toString().trim();
+  }
+
+  /// Googleカレンダー（およびTimeTreeのOSカレンダー連携）へ一括登録するURL
+  String toGoogleCalendarUrl(DateTime targetDate, {int? dayFilter}) {
+    final baseDate = dayFilter != null && dayFilter > 1
+        ? targetDate.add(Duration(days: dayFilter - 1))
+        : targetDate;
+    final y = baseDate.year.toString().padLeft(4, '0');
+    final m = baseDate.month.toString().padLeft(2, '0');
+    final d = baseDate.day.toString().padLeft(2, '0');
+    final nextDay = baseDate.add(const Duration(days: 1));
+    final ny = nextDay.year.toString().padLeft(4, '0');
+    final nm = nextDay.month.toString().padLeft(2, '0');
+    final nd = nextDay.day.toString().padLeft(2, '0');
+
+    final eventTitle =
+        dayFilter != null ? '$title (Day $dayFilter)' : title;
+    final filteredItems = dayFilter != null
+        ? items.where((i) => i.dayNumber == dayFilter).toList()
+        : items;
+    final details = filteredItems
+        .map((i) =>
+            '${i.timeText} ${i.type.icon}${i.title}${i.location.isNotEmpty ? " (${i.location})" : ""}${i.memo.isNotEmpty ? " - ${i.memo}" : ""}')
+        .join('\n');
+    final firstLocation = filteredItems
+        .map((i) => i.location)
+        .firstWhere((loc) => loc.isNotEmpty, orElse: () => '');
+
+    return Uri.https('www.google.com', '/calendar/render', {
+      'action': 'TEMPLATE',
+      'text': eventTitle,
+      'dates': '$y$m$d/$ny$nm$nd',
+      'details': details,
+      if (firstLocation.isNotEmpty) 'location': firstLocation,
+    }).toString();
+  }
+
+  /// 来週の「大阪・名古屋 家族旅行」初期サンプルしおり（自由に編集・追加可能！）
+  static TripPlan createOsakaNagoyaStarter() {
+    return TripPlan(
+      id: 'trip_osaka_nagoya_starter',
+      title: '🏯 大阪・名古屋 家族旅行しおり',
+      subtitle: '来週の家族旅行プラン（自由に時間・予定を編集できます！）',
+      totalDays: 3,
+      updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+      items: const [
+        // Day 1: 大阪
+        TripScheduleItem(
+          id: 'on_d1_1',
+          dayNumber: 1,
+          timeText: '09:00',
+          title: '出発 ➔ 大阪へ移動（飛行機 / 新幹線）',
+          type: TripItemType.shinkansen,
+          location: '伊丹空港 / 新大阪駅',
+          memo: '移動中のおやつ・飲み物を準備！',
+        ),
+        TripScheduleItem(
+          id: 'on_d1_2',
+          dayNumber: 1,
+          timeText: '11:30',
+          title: '大阪名物ランチ（たこ焼き・お好み焼き・串カツ）',
+          type: TripItemType.food,
+          location: '道頓堀・なんばエリア（大阪市中央区）',
+          memo: 'くいだおれ散策＆グリコ看板で家族記念撮影📸',
+        ),
+        TripScheduleItem(
+          id: 'on_d1_3',
+          dayNumber: 1,
+          timeText: '13:30',
+          title: '海遊館 または USJ（ユニバーサル・スタジオ・ジャパン）',
+          type: TripItemType.sightseeing,
+          location: '大阪市港区海岸通 / 此花区',
+          memo: '小学生が大興奮！ジンベエザメやアトラクションを満喫',
+          url: 'https://www.kaiyukan.com/',
+        ),
+        TripScheduleItem(
+          id: 'on_d1_4',
+          dayNumber: 1,
+          timeText: '18:30',
+          title: '大阪のホテルにチェックイン＆夕食',
+          type: TripItemType.hotel,
+          location: '大阪市内ホテル',
+          memo: 'ゆっくりお風呂に入って明日に備える♨️',
+        ),
+        // Day 2: 大阪 ➔ 名古屋
+        TripScheduleItem(
+          id: 'on_d2_1',
+          dayNumber: 2,
+          timeText: '09:30',
+          title: '新大阪駅 ➔ 名古屋駅へ新幹線移動（約50分）',
+          type: TripItemType.shinkansen,
+          location: 'JR新大阪駅 ➔ JR名古屋駅',
+          memo: 'のぞみ号であっという間に名古屋へ！',
+        ),
+        TripScheduleItem(
+          id: 'on_d2_2',
+          dayNumber: 2,
+          timeText: '11:00',
+          title: 'ジブリパーク または レゴランド・ジャパン',
+          type: TripItemType.sightseeing,
+          location: '愛知県長久手市 / 名古屋市港区',
+          memo: '子どもが一番楽しみにしているメインスポット！',
+          url: 'https://ghibli-park.jp/',
+        ),
+        TripScheduleItem(
+          id: 'on_d2_3',
+          dayNumber: 2,
+          timeText: '18:00',
+          title: '名古屋めしディナー（ひつまぶし・味噌カツ・手羽先）',
+          type: TripItemType.food,
+          location: '名古屋駅・栄エリア',
+          memo: 'あつた蓬莱軒や矢場とんなど名古屋名物を堪能🍽️',
+        ),
+        // Day 3: 名古屋観光 ➔ 帰路
+        TripScheduleItem(
+          id: 'on_d3_1',
+          dayNumber: 3,
+          timeText: '10:00',
+          title: '名古屋城 または 名古屋市科学館・名古屋港水族館',
+          type: TripItemType.sightseeing,
+          location: '名古屋市中区・港区',
+          memo: '金のシャチホコ見学や世界最大級のプラネタリウム！',
+        ),
+        TripScheduleItem(
+          id: 'on_d3_2',
+          dayNumber: 3,
+          timeText: '13:00',
+          title: '名古屋駅でお土産選び＆ランチ（きしめん・ぴよりん）',
+          type: TripItemType.shopping,
+          location: 'JR名古屋駅 うまいもん通り・高島屋',
+          memo: '赤福・ういろう・じゃがりこ手羽先味などをチェック🛍️',
+        ),
+        TripScheduleItem(
+          id: 'on_d3_3',
+          dayNumber: 3,
+          timeText: '15:30',
+          title: '名古屋から帰路へ（新幹線 / 飛行機）',
+          type: TripItemType.shinkansen,
+          location: '名古屋駅 / 中部国際空港セントレア',
+          memo: '気をつけて帰ろう！お疲れさまでした🏠',
+        ),
+      ],
+    );
+  }
+}
+
 /// お出かけスポット・イベントの1件分のデータ
 class OutingSpot {
   final String id;
@@ -151,6 +481,18 @@ class OutingSpot {
   /// 夫婦間のひとことメモ
   final String coupleNote;
 
+  /// 💮「行ったよ！」スタンプ登録状態（案C）
+  final bool isVisited;
+
+  /// 💮 行った日付（例: '2026/11/08'）
+  final String visitedDate;
+
+  /// 💮 家族の満足度（1〜5、デフォルト5）
+  final int visitedRating;
+
+  /// 💮 行ったときの思い出ひとことメモ
+  final String visitedMemory;
+
   const OutingSpot({
     required this.id,
     required this.title,
@@ -172,6 +514,10 @@ class OutingSpot {
     this.isFavorite = false,
     this.pickedBy,
     this.coupleNote = '',
+    this.isVisited = false,
+    this.visitedDate = '',
+    this.visitedRating = 5,
+    this.visitedMemory = '',
   });
 
   /// 車での所要時間を「約1時間15分」のような文字列に変換する
@@ -185,6 +531,22 @@ class OutingSpot {
       return '車で約$hours時間';
     }
     return '車で約$hours時間$mins分';
+  }
+
+  /// 雨の日・寒い日でも安心なスポットかどうか（案B：天候連動フィルター用）
+  bool get isRainOrColdFriendly {
+    if (category == SpotCategory.indoor ||
+        category == SpotCategory.onsen ||
+        category == SpotCategory.dining) {
+      return true;
+    }
+    if (tags.contains(SpotTag.indoor) || tags.contains(SpotTag.onsen)) {
+      return true;
+    }
+    final combined = '$title $subtitle ${recommendPoints.join(" ")}';
+    return RegExp(
+            r'(屋内|室内|科学館|水族館|博物館|美術館|児童館|プラネタリウム|温泉|銭湯|スパ|サウナ|ドーム|ホール|ワークショップ|工作)')
+        .hasMatch(combined);
   }
 
   /// 情報ソースの表示用短縮ラベル（例: 'いこーよ', 'せんだい旅日和', '仙台つーしん', 'Walkerplus', 'Googleマップ'）
@@ -255,11 +617,54 @@ class OutingSpot {
     return 'https://www.google.com/maps/search/?api=1&query=$query';
   }
 
+  /// Googleカレンダー（＆TimeTreeのOSカレンダー連携）へ予定追加するURL（案E）
+  String toGoogleCalendarUrl(DateTime targetDate) {
+    final y = targetDate.year.toString().padLeft(4, '0');
+    final m = targetDate.month.toString().padLeft(2, '0');
+    final d = targetDate.day.toString().padLeft(2, '0');
+    final nextDay = targetDate.add(const Duration(days: 1));
+    final ny = nextDay.year.toString().padLeft(4, '0');
+    final nm = nextDay.month.toString().padLeft(2, '0');
+    final nd = nextDay.day.toString().padLeft(2, '0');
+
+    final details = [
+      '${category.icon} $subtitle',
+      '🚗 $driveTimeLabel（約${distanceKm.toStringAsFixed(0)}km）',
+      '📅 $scheduleText',
+      '🅿️ $parkingInfo',
+      if (coupleNote.isNotEmpty) '💬 夫婦メモ: $coupleNote',
+      if (url.isNotEmpty) '🌐 公式/元記事: $url',
+      '🗺️ 地図: $googleMapsUrl',
+    ].join('\n');
+
+    return Uri.https('www.google.com', '/calendar/render', {
+      'action': 'TEMPLATE',
+      'text': '🚗 $title',
+      'dates': '$y$m$d/$ny$nm$nd',
+      'details': details,
+      'location': address,
+    }).toString();
+  }
+
+  /// TimeTreeアプリへ貼り付けやすいコンパクト予定テキスト（案E）
+  String toTimeTreeCopyText() {
+    return '【$title】\n'
+        '📍 場所: $address\n'
+        '🚗 移動: $driveTimeLabel\n'
+        '📅 日時: $scheduleText\n'
+        '🅿️ 駐車場: $parkingInfo\n'
+        '${coupleNote.isNotEmpty ? "💬 メモ: $coupleNote\n" : ""}'
+        '🌐 ${url.isNotEmpty ? url : googleMapsUrl}';
+  }
+
   /// 夫婦でLINEなどに共有するためのテキストを生成する
   String toShareText() {
     final tagText = tags.map((t) => '#${t.label}').join(' ');
     final points = recommendPoints.map((p) => '・$p').join('\n');
     final notePart = coupleNote.isNotEmpty ? '\n💬 夫婦メモ: $coupleNote\n' : '';
+    final visitedPart = isVisited
+        ? '\n💮 行ったよ記録（$visitedDate / ★$visitedRating）: $visitedMemory\n'
+        : '';
     final urlPart = url.isNotEmpty ? '\n🌐 公式/元記事: $url\n' : '';
     return '【週末お出かけ候補】${category.icon} $title\n'
         '🏷️ 情報元: $sourceBadgeIcon $sourceBadgeLabel\n'
@@ -268,7 +673,7 @@ class OutingSpot {
         '📅 $scheduleText\n'
         '🅿️ $parkingInfo\n'
         '🌤️ 天気予報: $weatherText\n'
-        '$tagText$notePart$urlPart\n'
+        '$tagText$notePart$visitedPart$urlPart\n'
         '✨ おすすめポイント\n$points\n\n'
         '💡 ドライブアドバイス: $aiTip\n\n'
         '🗺️ Googleマップ: $googleMapsUrl';
@@ -296,6 +701,10 @@ class OutingSpot {
     bool? isFavorite,
     PartnerPick? pickedBy,
     String? coupleNote,
+    bool? isVisited,
+    String? visitedDate,
+    int? visitedRating,
+    String? visitedMemory,
   }) {
     return OutingSpot(
       id: id ?? this.id,
@@ -318,6 +727,10 @@ class OutingSpot {
       isFavorite: isFavorite ?? this.isFavorite,
       pickedBy: pickedBy ?? this.pickedBy,
       coupleNote: coupleNote ?? this.coupleNote,
+      isVisited: isVisited ?? this.isVisited,
+      visitedDate: visitedDate ?? this.visitedDate,
+      visitedRating: visitedRating ?? this.visitedRating,
+      visitedMemory: visitedMemory ?? this.visitedMemory,
     );
   }
 
@@ -344,6 +757,10 @@ class OutingSpot {
       'isFavorite': isFavorite,
       'pickedBy': pickedBy?.name,
       'coupleNote': coupleNote,
+      'isVisited': isVisited,
+      'visitedDate': visitedDate,
+      'visitedRating': visitedRating,
+      'visitedMemory': visitedMemory,
     };
   }
 
@@ -385,6 +802,10 @@ class OutingSpot {
       isFavorite: json['isFavorite'] as bool? ?? false,
       pickedBy: PartnerPick.fromKey(json['pickedBy'] as String?),
       coupleNote: json['coupleNote'] as String? ?? '',
+      isVisited: json['isVisited'] as bool? ?? false,
+      visitedDate: json['visitedDate'] as String? ?? '',
+      visitedRating: (json['visitedRating'] as num?)?.toInt() ?? 5,
+      visitedMemory: json['visitedMemory'] as String? ?? '',
     );
   }
 }

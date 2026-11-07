@@ -211,5 +211,29 @@ void main() {
     expect(sorted.first.sourceBadgeIcon, '🧒');
     expect(generalEvent.sourceBadgeLabel, 'Walkerplus');
     expect(generalEvent.sourceBadgeIcon, '🚶');
+
+    final osakaNagoyaPlan = TripPlan.createOsakaNagoyaStarter();
+    expect(osakaNagoyaPlan.title, contains('大阪・名古屋'));
+    expect(osakaNagoyaPlan.totalDays, 3);
+    expect(osakaNagoyaPlan.items.any((i) => i.title.contains('ジブリパーク')), isTrue);
+    expect(osakaNagoyaPlan.toShareText(), contains('Day 1'));
+
+    final spot = GeminiOutingService.getInitialSpots().first;
+    final visitedSpot = spot.copyWith(
+      isVisited: true,
+      visitedDate: '2026/11/08',
+      visitedRating: 5,
+      visitedMemory: '子どもが大喜び！',
+    );
+    final restored = OutingSpot.fromJson(visitedSpot.toJson());
+    expect(restored.isVisited, isTrue);
+    expect(restored.visitedDate, '2026/11/08');
+    expect(restored.visitedRating, 5);
+    expect(restored.visitedMemory, '子どもが大喜び！');
+    expect(restored.toTimeTreeCopyText(), contains(spot.title));
+    expect(
+      restored.toGoogleCalendarUrl(DateTime(2026, 11, 14)),
+      contains('calendar/render'),
+    );
   });
 }
