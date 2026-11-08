@@ -1645,9 +1645,12 @@ class _HomeScreenState extends State<HomeScreen> {
               child: const Icon(Icons.arrow_upward),
             )
           : null,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentTabIndex,
-        onDestinationSelected: _selectBottomTab,
+      bottomNavigationBar: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragEnd: _handleHorizontalTabSwipe,
+        child: NavigationBar(
+          selectedIndex: _currentTabIndex,
+          onDestinationSelected: _selectBottomTab,
         destinations: [
           const NavigationDestination(
             icon: Icon(Icons.explore_outlined),
@@ -1687,8 +1690,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   /// タブ1：東北6県タブ・期間指定・天気予報・ジャンル別スポット検索画面
   Widget _buildExploreTab(BuildContext context) {
@@ -1799,7 +1803,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      ...SpotCategory.values.map((cat) {
+                      ...SpotCategory.values.where((cat) => cat != SpotCategory.gourmet).map((cat) {
                         final isSelected = _selectedCategory == cat;
                         return Padding(
                           padding: const EdgeInsets.only(right: 8),
@@ -3017,7 +3021,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     _buildMapGenreChip(SpotCategory.park, '🏃 周辺の大きな公園'),
                     _buildMapGenreChip(SpotCategory.smallPark, '🌳 周辺の小さな公園'),
                     _buildMapGenreChip(SpotCategory.indoor, '🏛️ 周辺の屋内施設'),
-                    _buildMapGenreChip(SpotCategory.gourmet, '🍠 周辺のグルメ・道の駅'),
                     _buildMapGenreChip(SpotCategory.event, '🎪 周辺のイベント'),
                   ],
                 ),
@@ -3026,27 +3029,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
 
-        // 画面左右端のスワイプ検出ゾーン（地図ドラッグと干渉せずメインタブ移動を可能にする）
-        Positioned(
-          left: 0,
-          top: 0,
-          bottom: 0,
-          width: 22,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragEnd: _handleHorizontalTabSwipe,
-          ),
-        ),
-        Positioned(
-          right: 0,
-          top: 0,
-          bottom: 0,
-          width: 22,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragEnd: _handleHorizontalTabSwipe,
-          ),
-        ),
+
 
         // マップ下部：検索結果スポットの横スクロールカード一覧（リスト表示）
         if (spots.isNotEmpty)
@@ -3661,15 +3644,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     spot, SpotCategory.park);
                               },
                             ),
-                            ActionChip(
-                              label: const Text('🍠 近くのグルメ・道の駅',
-                                  style: TextStyle(fontSize: 12)),
-                              onPressed: () {
-                                Navigator.of(sheetContext).pop();
-                                _jumpToMapAndSearchNearby(
-                                    spot, SpotCategory.gourmet);
-                              },
-                            ),
+
                           ],
                         ),
                       ],
@@ -3732,6 +3707,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
                   const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        _jumpToMapAndSearchNearby(spot, null);
+                      },
+                      icon: const Icon(Icons.map_outlined),
+                      label: const Text('🗺️ アプリ内のドライブ地図で位置を見る',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
                       Expanded(

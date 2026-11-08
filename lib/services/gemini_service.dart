@@ -663,17 +663,19 @@ class GeminiOutingService {
       return SpotCategory.dining;
     }
     if (cleanQuery.contains('グルメ') ||
-        cleanQuery.contains('マルシェ') ||
         cleanQuery.contains('おいも') ||
-        cleanQuery.contains('万博') ||
         cleanQuery.contains('パン') ||
         cleanQuery.contains('コーヒー') ||
         cleanQuery.contains('芋煮') ||
-        cleanQuery.contains('キッチンカー') ||
+        cleanQuery.contains('キッチンカー')) {
+      return SpotCategory.dining;
+    }
+    if (cleanQuery.contains('マルシェ') ||
+        cleanQuery.contains('万博') ||
         cleanQuery.contains('道の駅') ||
         cleanQuery.contains('朝市') ||
         cleanQuery.contains('マーケット')) {
-      return SpotCategory.gourmet;
+      return SpotCategory.tourism;
     }
     if (cleanQuery.contains('期間限定') ||
         cleanQuery.contains('イベント') ||
@@ -1147,7 +1149,7 @@ class GeminiOutingService {
             subtitle: rawDesc.isNotEmpty
                 ? rawDesc
                 : '【$areaStr】$dateRangeText に開催される注目イベント',
-            category: isGourmet ? SpotCategory.gourmet : SpotCategory.event,
+            category: isGourmet ? SpotCategory.dining : SpotCategory.event,
             tags: [
               if (isGourmet) SpotTag.food,
               SpotTag.kids,
@@ -1266,7 +1268,7 @@ class GeminiOutingService {
               id: 'st_${rawTitle.hashCode.abs()}',
               title: rawTitle.replaceAll('みたい！', '').replaceAll('みたい。', ''),
               subtitle: rawDesc.length > 90 ? '${rawDesc.substring(0, 90)}...' : rawDesc,
-              category: isGourmet ? SpotCategory.gourmet : SpotCategory.event,
+              category: isGourmet ? SpotCategory.dining : SpotCategory.event,
               tags: [
                 if (isGourmet) SpotTag.food,
                 SpotTag.kids,
@@ -1393,7 +1395,7 @@ class GeminiOutingService {
             subtitle: periodText.isNotEmpty
                 ? '【${areaTarget.prefName}】開催期間: $periodText'
                 : '【${areaTarget.prefName}】$dateRangeLabel に楽しめる注目イベント',
-            category: isGourmet ? SpotCategory.gourmet : SpotCategory.event,
+            category: isGourmet ? SpotCategory.dining : SpotCategory.event,
             tags: [
               if (isGourmet) SpotTag.food,
               SpotTag.kids,
@@ -1563,7 +1565,7 @@ class GeminiOutingService {
                 id: 'ikoyo_${region.ikoyoPrefectureId}_${name.hashCode.abs()}',
                 title: name,
                 subtitle: desc.length > 90 ? '${desc.substring(0, 90)}...' : desc,
-                category: isGourmet ? SpotCategory.gourmet : SpotCategory.event,
+                category: isGourmet ? SpotCategory.dining : SpotCategory.event,
                 tags: [
                   SpotTag.kids,
                   if (isGourmet) SpotTag.food,
@@ -1735,10 +1737,10 @@ class GeminiOutingService {
 
       case SpotCategory.tourism:
         searchQueries = specificKeyword.isNotEmpty
-            ? ['$specificKeyword 周辺 観光スポット 名所 展望台', '$specificKeyword 周辺 観光地 絶景 史跡 散策']
+            ? ['$specificKeyword 周辺 観光スポット 名所 展望台', '$specificKeyword 周辺 観光地 絶景 史跡 散策 道の駅']
             : [
                 '$queryPrefix 観光スポット 名所 観光地 展望台 城跡',
-                '$queryPrefix 渓谷 滝 絶景 ドライブスポット 観光名所',
+                '$queryPrefix 渓谷 滝 絶景 ドライブスポット 観光名所 道の駅',
               ];
         break;
 
@@ -1752,29 +1754,21 @@ class GeminiOutingService {
         break;
 
       case SpotCategory.dining:
+      case SpotCategory.gourmet:
         searchQueries = specificKeyword.isNotEmpty
             ? [
                 '$specificKeyword 周辺 ランチ 美味しい 食事処',
                 '$specificKeyword 周辺 名物 そば 定食 食堂 カフェ レストラン',
+                '$specificKeyword 周辺 道の駅 ご当地グルメ 食べ歩き',
               ]
             : [
                 '$queryPrefix ご当地グルメ 名物ランチ 食堂 定食屋',
                 '$queryPrefix 人気ランチ 子連れ 美味しい レストラン',
-                '$queryPrefix ドライブ レストラン 名物料理 郷土料理',
+                '$queryPrefix 道の駅 食堂 ドライブイン 名物料理',
               ];
         break;
 
-      case SpotCategory.gourmet:
-        searchQueries = specificKeyword.isNotEmpty
-            ? [
-                '$specificKeyword 周辺 グルメ マルシェ 道の駅 食べ歩き',
-                '$specificKeyword 周辺 スイーツ お土産 直売所 カフェ',
-              ]
-            : [
-                '$queryPrefix 道の駅 農産物直売所 朝市 マルシェ',
-                '$queryPrefix ご当地グルメ 観光市場 食べ歩き 人気',
-              ];
-        break;
+
 
       default:
         // フリーワード検索または「すべて」
@@ -2437,13 +2431,15 @@ $candidateListText
         t.contains('御食事')) {
       return SpotCategory.dining;
     }
-    if (t.contains('マルシェ') ||
-        t.contains('グルメ') ||
-        t.contains('道の駅') ||
+    if (t.contains('グルメ') ||
         t.contains('朝市') ||
-        t.contains('市場') ||
+        t.contains('市場')) {
+      return SpotCategory.dining;
+    }
+    if (t.contains('マルシェ') ||
+        t.contains('道の駅') ||
         t.contains('直売所')) {
-      return SpotCategory.gourmet;
+      return SpotCategory.tourism;
     }
     if (t.contains('展望') ||
         t.contains('城') ||

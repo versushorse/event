@@ -291,7 +291,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 }),
               ),
               const SizedBox(width: 6),
-              ...SpotCategory.values.map((cat) {
+              ...SpotCategory.values.where((cat) => cat != SpotCategory.gourmet).map((cat) {
                 final count = widget.favoriteSpots
                     .where((s) => s.category == cat)
                     .length;

@@ -803,10 +803,13 @@ class OutingSpot {
   /// JSONからのデシリアライズ
   factory OutingSpot.fromJson(Map<String, dynamic> json) {
     final catName = json['category'] as String? ?? 'event';
-    final category = SpotCategory.values.firstWhere(
-      (c) => c.name == catName,
-      orElse: () => SpotCategory.event,
-    );
+    // グルメ・マルシェ（gourmet）は「地元グルメ・食事処（dining）」へ自動集約
+    final category = catName == 'gourmet'
+        ? SpotCategory.dining
+        : SpotCategory.values.firstWhere(
+            (c) => c.name == catName,
+            orElse: () => SpotCategory.event,
+          );
 
     final rawTags = json['tags'] as List<dynamic>? ?? [];
     final tags = rawTags

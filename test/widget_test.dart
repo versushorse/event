@@ -25,7 +25,6 @@ void main() {
     expect(find.text('山形県'), findsWidgets);
     expect(find.text('岩手県'), findsWidgets);
     expect(find.text('期間限定イベント'), findsWidgets);
-    expect(find.text('グルメ・マルシェ'), findsWidgets);
     expect(find.text('地元グルメ・食事処'), findsWidgets);
     expect(find.text('観光地・名所'), findsWidgets);
     expect(find.text('温泉・日帰り銭湯'), findsWidgets);
@@ -241,5 +240,27 @@ void main() {
       restored.toGoogleCalendarUrl(DateTime(2026, 11, 14)),
       contains('calendar/render'),
     );
+  });
+
+  test('旧gourmetカテゴリが食事処（dining）へ自動集約フォールバックされるテスト', () {
+    final oldGourmetJson = {
+      'id': 'gourmet_old_1',
+      'title': 'あ・ら・伊達な道の駅',
+      'subtitle': '全国人気ナンバーワンの道の駅',
+      'category': 'gourmet',
+      'tags': ['food', 'kids'],
+      'driveMinutes': 50,
+      'distanceKm': 45.0,
+      'scheduleText': '9:00〜18:00',
+      'parkingInfo': '無料駐車場300台',
+      'recommendPoints': ['ロイズソフトクリーム'],
+      'aiTip': '',
+      'address': '大崎市岩出山',
+      'latitude': 38.65,
+      'longitude': 140.85,
+    };
+
+    final spot = OutingSpot.fromJson(oldGourmetJson);
+    expect(spot.category, SpotCategory.dining);
   });
 }
