@@ -8,6 +8,7 @@ import '../models/outing_spot.dart';
 
 class CoupleSyncService {
   static const String _prefRoomKey = 'couple_room_code';
+  static const String _prefMyRoleKey = 'couple_my_role';
   static const String _prefFavoritesKey = 'couple_favorites_json';
   static const String _prefTripsKey = 'couple_trips_json';
   static const String _prefTripsUpdatedAtKey = 'couple_trips_updated_at';
@@ -16,6 +17,21 @@ class CoupleSyncService {
 
   /// 無料KVS（設定不要のキーバリューストア）のAppKey
   static const String _fallbackKvsAppKey = '2pbg4ppa';
+
+  /// このスマホの使用者（夫 or 妻）を取得する（未設定ならnull）
+  static Future<PartnerPick?> getMyRole() async {
+    final prefs = await SharedPreferences.getInstance();
+    final roleStr = prefs.getString(_prefMyRoleKey);
+    if (roleStr == PartnerPick.husband.name) return PartnerPick.husband;
+    if (roleStr == PartnerPick.wife.name) return PartnerPick.wife;
+    return null;
+  }
+
+  /// このスマホの使用者（夫 or 妻）を保存する
+  static Future<void> saveMyRole(PartnerPick role) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefMyRoleKey, role.name);
+  }
 
   /// ローカルに保存された家族合言葉を取得する
   static Future<String> getRoomCode() async {

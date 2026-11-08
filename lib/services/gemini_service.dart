@@ -314,9 +314,51 @@ class GeminiOutingService {
         latitude: 38.3639,
         longitude: 140.6722,
         weatherText: '☀️ ドライブ日和',
-        sourceInfo: '定義観光協会・食べログ百名店',
+        sourceInfo: '定義観光協会・Googleマップ高評価',
         url: 'https://sankaku-tofu.jp/',
         isFavorite: false,
+        googleRating: 4.4,
+        googleRatingCount: 3820,
+        googleReviews: const [
+          '★5: 揚げたての三角あぶらあげが外はカリッと中はジューシーで最高！にんにく七味が相性抜群です。',
+          '★5: ドライブがてら家族で訪問。回転が早くてすぐ買えました。隣のベンチで熱々を食べられます！',
+        ],
+      ),
+
+      // 9. 観光地・名所（日本三景 松島海岸・五大堂＆仁王島遊覧）
+      OutingSpot(
+        id: 'tourism_matsushima_kaigan',
+        title: '日本三景 松島海岸（五大堂・福浦橋・遊覧船）',
+        subtitle: '260余りの島々が浮かぶ絶景スポット！赤い透かし橋を渡るスリルと食べ歩き散策に大人気',
+        category: SpotCategory.tourism,
+        tags: const [
+          SpotTag.nature,
+          SpotTag.food,
+          SpotTag.baby,
+        ],
+        driveMinutes: 32,
+        distanceKm: 23.0,
+        scheduleText: '終日散策自由（遊覧船・瑞巌寺は9:00〜16:30）',
+        parkingInfo: '松島公園駐車場ほか周辺観光駐車場多数あり',
+        recommendPoints: const [
+          '海の上にかかる「すかし橋」を渡る五大堂や全長252mの福浦橋は小学生もワクワクする観光名所',
+          '湾内を巡る大型遊覧船や、焼きたての手焼き笹かま体験・牡蠣カレーパンなど食べ歩きも充実',
+          '展望台（西行戻しの松公園など）からの松島湾パノラマ絶景は家族写真のベストスポット',
+        ],
+        aiTip: '海岸沿いの中心駐車場が満車のときは、高台の「西行戻しの松公園（無料駐車場）」に停めて絶景とカフェを楽しむのも穴場です。',
+        address: '宮城県宮城郡松島町松島字町内',
+        latitude: 38.3719,
+        longitude: 141.0598,
+        weatherText: '☀️ 絶景ドライブ日和',
+        sourceInfo: '松島観光協会 公式 / Googleマップ高評価',
+        url: 'https://www.matsushima-kanko.com/',
+        isFavorite: false,
+        googleRating: 4.3,
+        googleRatingCount: 5410,
+        googleReviews: const [
+          '★5: 遊覧船からの景色が素晴らしく、小学生の子どもも大喜びでした！笹かまの手焼き体験も楽しいです。',
+          '★4: 五大堂の透かし橋がスリル満点。周辺の食事処や食べ歩きグルメも豊富で半日たっぷり遊べます。',
+        ],
       ),
     ];
   }
@@ -338,7 +380,7 @@ class GeminiOutingService {
   }) async {
     final apiKey = AppApiKeys.geminiApiKey.trim();
     final mapsKey = AppApiKeys.googleMapsApiKey.trim();
-    final cleanQuery = query.replaceAll(RegExp(r'[🎪🍠🏃♨️🏛️🌳⛩️🍔👶👦☔✨📍🚗🍎⛰️🌾🍒🍑]'), '').trim();
+    final cleanQuery = query.replaceAll(RegExp(r'[🎪🍠🍽️📸🏃♨️🏛️🌳⛩️🍔👶👦☔✨📍🚗🍎⛰️🌾🍒🍑]'), '').trim();
 
     final effectiveDateRange = targetDateRange ?? getUpcomingWeekendRange();
     final dateRangeText = formatDateRange(effectiveDateRange);
@@ -431,7 +473,12 @@ class GeminiOutingService {
       }
 
       final combinedGourmet = _deduplicateAndAggregateSpots([
-        ...liveGourmetEvents,
+        ...( _stripAreaAndGenreWords(cleanQuery).isNotEmpty
+            ? liveGourmetEvents.where((s) =>
+                '${s.title} ${s.subtitle} ${s.address}'
+                    .toLowerCase()
+                    .contains(_stripAreaAndGenreWords(cleanQuery).toLowerCase()))
+            : liveGourmetEvents),
         ...placesGourmetSpots,
       ]);
       combinedGourmet.sort((a, b) => _compareSpotsForFamily(
@@ -579,6 +626,15 @@ class GeminiOutingService {
         cleanQuery.contains('美術館')) {
       return SpotCategory.indoor;
     }
+    if (cleanQuery.contains('観光地') ||
+        cleanQuery.contains('名所') ||
+        cleanQuery.contains('展望') ||
+        cleanQuery.contains('絶景') ||
+        cleanQuery.contains('城') ||
+        cleanQuery.contains('渓谷') ||
+        cleanQuery.contains('滝')) {
+      return SpotCategory.tourism;
+    }
     if (cleanQuery.contains('神社') ||
         cleanQuery.contains('仏閣') ||
         cleanQuery.contains('寺') ||
@@ -668,24 +724,24 @@ class GeminiOutingService {
     return null;
   }
 
-  /// フリーワード内に東北の他県名が含まれている場合、その県を優先する
+  /// フリーワード内に東北の他県名や主要観光地名が含まれている場合、その県を優先する
   static TohokuRegion _resolveEffectiveTohokuRegion(String query, TohokuRegion selectedRegion) {
-    if (query.contains('青森') || query.contains('弘前') || query.contains('八戸') || query.contains('十和田')) {
+    if (query.contains('青森') || query.contains('弘前') || query.contains('八戸') || query.contains('十和田') || query.contains('奥入瀬') || query.contains('浅虫') || query.contains('恐山')) {
       return TohokuRegion.aomori;
     }
-    if (query.contains('岩手') || query.contains('盛岡') || query.contains('平泉') || query.contains('一関') || query.contains('花巻') || query.contains('北上')) {
+    if (query.contains('岩手') || query.contains('盛岡') || query.contains('平泉') || query.contains('中尊寺') || query.contains('一関') || query.contains('花巻') || query.contains('北上') || query.contains('厳美渓') || query.contains('猊鼻渓') || query.contains('龍泉洞') || query.contains('浄土ヶ浜') || query.contains('小岩井')) {
       return TohokuRegion.iwate;
     }
-    if (query.contains('秋田') || query.contains('横手') || query.contains('角館') || query.contains('田沢湖') || query.contains('男鹿')) {
+    if (query.contains('秋田') || query.contains('横手') || query.contains('角館') || query.contains('田沢湖') || query.contains('男鹿') || query.contains('乳頭温泉') || query.contains('十文字')) {
       return TohokuRegion.akita;
     }
-    if (query.contains('山形') || query.contains('天童') || query.contains('東根') || query.contains('上山') || query.contains('米沢') || query.contains('鶴岡') || query.contains('酒田') || query.contains('銀山')) {
+    if (query.contains('山形') || query.contains('山寺') || query.contains('立石寺') || query.contains('天童') || query.contains('東根') || query.contains('上山') || query.contains('かみのやま') || query.contains('米沢') || query.contains('鶴岡') || query.contains('酒田') || query.contains('銀山') || query.contains('寒河江') || query.contains('尾花沢') || query.contains('加茂水族館') || query.contains('羽黒山') || query.contains('蔵王温泉')) {
       return TohokuRegion.yamagata;
     }
-    if (query.contains('福島') || query.contains('郡山') || query.contains('会津') || query.contains('いわき') || query.contains('猪苗代') || query.contains('裏磐梯') || query.contains('飯坂')) {
+    if (query.contains('福島') || query.contains('郡山') || query.contains('会津') || query.contains('大内宿') || query.contains('鶴ヶ城') || query.contains('いわき') || query.contains('猪苗代') || query.contains('裏磐梯') || query.contains('五色沼') || query.contains('飯坂') || query.contains('ハワイアンズ')) {
       return TohokuRegion.fukushima;
     }
-    if (query.contains('宮城') || query.contains('仙台') || query.contains('松島') || query.contains('秋保') || query.contains('作並') || query.contains('鳴子') || query.contains('石巻') || query.contains('気仙沼')) {
+    if (query.contains('宮城') || query.contains('仙台') || query.contains('松島') || query.contains('秋保') || query.contains('作並') || query.contains('鳴子') || query.contains('石巻') || query.contains('気仙沼') || query.contains('定義') || query.contains('塩竈') || query.contains('多賀城') || query.contains('白石') || query.contains('女川') || query.contains('南三陸')) {
       return TohokuRegion.miyagi;
     }
     return selectedRegion;
@@ -1584,6 +1640,7 @@ class GeminiOutingService {
     const words = [
       '宮城県', '宮城', '山形県', '山形', '岩手県', '岩手', '福島県', '福島', '秋田県', '秋田', '青森県', '青森',
       '期間限定イベント', '期間限定', 'イベント', 'グルメ・マルシェ', 'グルメ', 'マルシェ',
+      '地元グルメ・食事処', '地元グルメ', '食事処', '観光地・名所', '観光地', '名所',
       '大きな公園（小学生）', '大きな公園', '小さな公園', '公園', '温泉・日帰り銭湯', '温泉', '銭湯',
       '屋内スポット', '屋内', '神社仏閣', '神社', '仏閣', '寺院',
     ];
@@ -1640,7 +1697,7 @@ class GeminiOutingService {
     switch (targetCategory) {
       case SpotCategory.onsen:
         searchQueries = specificKeyword.isNotEmpty
-            ? ['$query 温泉 日帰り入浴', '$query スーパー銭湯 露天風呂']
+            ? ['$specificKeyword 周辺 温泉 日帰り入浴 露天風呂', '$specificKeyword 周辺 スーパー銭湯 銭湯 足湯']
             : [
                 '$queryPrefix 日帰り温泉 温泉 露天風呂 源泉',
                 '$queryPrefix スーパー銭湯 銭湯 サウナ スパ 共同浴場',
@@ -1649,7 +1706,7 @@ class GeminiOutingService {
 
       case SpotCategory.indoor:
         searchQueries = specificKeyword.isNotEmpty
-            ? ['$query 科学館 博物館 水族館', '$query 屋内 遊び場 美術館']
+            ? ['$specificKeyword 周辺 科学館 博物館 水族館 記念館', '$specificKeyword 周辺 屋内 遊び場 美術館 体験施設']
             : [
                 '$queryPrefix 科学館 博物館 水族館 天文台 美術館',
                 '$queryPrefix 屋内遊び場 児童館 体験施設 こども館',
@@ -1658,7 +1715,7 @@ class GeminiOutingService {
 
       case SpotCategory.park:
         searchQueries = specificKeyword.isNotEmpty
-            ? ['$query 大型公園 アスレチック', '$query 総合公園 運動公園']
+            ? ['$specificKeyword 周辺 大型公園 アスレチック 総合公園', '$specificKeyword 周辺 運動公園 自然公園 広場']
             : [
                 '$queryPrefix 大型公園 総合公園 国営公園 県立公園 運動公園',
                 '$queryPrefix フィールドアスレチック 冒険広場 大型遊具 森林公園',
@@ -1669,16 +1726,25 @@ class GeminiOutingService {
         // 小さな公園：地図中心検索または現在地と同じ県なら近傍を優先しつつ複数取得
         biasRadiusMeters = isMapSearch ? 12000.0 : 25000.0;
         searchQueries = specificKeyword.isNotEmpty
-            ? ['$query 公園 緑地', '$query 児童公園 広場']
+            ? ['$specificKeyword 周辺 公園 緑地 広場', '$specificKeyword 周辺 児童公園 親水公園']
             : [
                 '$queryPrefix 公園 緑地 親水公園 芝生広場',
                 '$queryPrefix 児童公園 近隣公園 街区公園',
               ];
         break;
 
+      case SpotCategory.tourism:
+        searchQueries = specificKeyword.isNotEmpty
+            ? ['$specificKeyword 周辺 観光スポット 名所 展望台', '$specificKeyword 周辺 観光地 絶景 史跡 散策']
+            : [
+                '$queryPrefix 観光スポット 名所 観光地 展望台 城跡',
+                '$queryPrefix 渓谷 滝 絶景 ドライブスポット 観光名所',
+              ];
+        break;
+
       case SpotCategory.sightseeing:
         searchQueries = specificKeyword.isNotEmpty
-            ? ['$query 神社 寺院', '$query 仏閣 八幡宮 東照宮']
+            ? ['$specificKeyword 周辺 神社 寺院 仏閣', '$specificKeyword 周辺 八幡宮 東照宮 観音']
             : [
                 '$queryPrefix 神社 八幡宮 東照宮 稲荷神社 神宮',
                 '$queryPrefix 寺院 仏閣 観音 不動尊 大社',
@@ -1687,7 +1753,10 @@ class GeminiOutingService {
 
       case SpotCategory.dining:
         searchQueries = specificKeyword.isNotEmpty
-            ? ['$query ランチ 美味しい 食事処', '$query ご当地グルメ 定食 食堂']
+            ? [
+                '$specificKeyword 周辺 ランチ 美味しい 食事処',
+                '$specificKeyword 周辺 名物 そば 定食 食堂 カフェ レストラン',
+              ]
             : [
                 '$queryPrefix ご当地グルメ 名物ランチ 食堂 定食屋',
                 '$queryPrefix 人気ランチ 子連れ 美味しい レストラン',
@@ -1697,7 +1766,10 @@ class GeminiOutingService {
 
       case SpotCategory.gourmet:
         searchQueries = specificKeyword.isNotEmpty
-            ? ['$query グルメ マルシェ 道の駅', '$query 市場 直売所']
+            ? [
+                '$specificKeyword 周辺 グルメ マルシェ 道の駅 食べ歩き',
+                '$specificKeyword 周辺 スイーツ お土産 直売所 カフェ',
+              ]
             : [
                 '$queryPrefix 道の駅 農産物直売所 朝市 マルシェ',
                 '$queryPrefix ご当地グルメ 観光市場 食べ歩き 人気',
@@ -1708,8 +1780,8 @@ class GeminiOutingService {
         // フリーワード検索または「すべて」
         if (query.isNotEmpty) {
           searchQueries = [
-            query.contains(areaName) ? query : '$areaName $query',
-            '$query 観光 お出かけ スポット',
+            '$query 周辺 観光 お出かけ スポット',
+            '$query 周辺 ランチ グルメ 名所',
           ];
         } else {
           searchQueries = [
@@ -1727,8 +1799,8 @@ class GeminiOutingService {
         'languageCode': 'ja',
         'maxResultCount': 20,
       };
-      // フリーワードで東北外の遠隔地が直接書かれていない場合は、対象エリア中心のlocationBiasを付与
-      if (externalArea == null || isMapSearch) {
+      // 具体的な地名・目的地キーワード（例：「山寺」）が入力されていない通常エリア検索、または地図中心検索のときのみ locationBias を付与
+      if (isMapSearch || (externalArea == null && specificKeyword.isEmpty)) {
         reqBody['locationBias'] = {
           'circle': {
             'center': {
@@ -1832,8 +1904,11 @@ class GeminiOutingService {
           .replaceFirst(RegExp(r'^日本、〒\d{3}-\d{4}\s*'), '')
           .replaceFirst('日本、', '');
 
-      // 地域タブ指定時（かつフリーワードで他県を指定していない時）は、他県の無関係なスポットが混ざらないようチェック
-      if (!isMapSearch && externalArea == null && rawAddress.isNotEmpty) {
+      // 地域タブ指定時（かつ具体的な地名・目的地キーワードや他県を指定していない時）のみ、他県の無関係なスポットが混ざらないようチェック
+      if (!isMapSearch &&
+          externalArea == null &&
+          specificKeyword.isEmpty &&
+          rawAddress.isNotEmpty) {
         final targetPrefShort = effectiveRegion.label.substring(0, 2); // 宮城, 山形, 岩手, 福島, 秋田, 青森
         // 他の都道府県のスポットが混入していたらスキップ（県境付近の施設は許容）
         const allPrefs = ['宮城県', '山形県', '岩手県', '福島県', '秋田県', '青森県', '東京都', '北海道'];
@@ -1848,28 +1923,24 @@ class GeminiOutingService {
 
       final reviewsRaw = raw['reviews'] as List<dynamic>? ?? [];
       final reviewTexts = <String>[];
+      final formattedGoogleReviews = <String>[];
       for (final rev in reviewsRaw) {
         if (rev is Map<String, dynamic>) {
           final textMap = rev['text'] as Map<String, dynamic>?;
           final t = textMap?['text'] as String?;
+          final revRating = (rev['rating'] as num?)?.toInt();
           if (t != null && t.trim().isNotEmpty) {
-            reviewTexts.add(t.replaceAll('\n', ' ').trim());
+            final cleanRev = t.replaceAll('\n', ' ').trim();
+            reviewTexts.add(cleanRev);
+            if (formattedGoogleReviews.length < 4) {
+              final shortRev = cleanRev.length > 95
+                  ? '${cleanRev.substring(0, 95)}...'
+                  : cleanRev;
+              final starPrefix = revRating != null ? '★$revRating: ' : '💬 ';
+              formattedGoogleReviews.add('$starPrefix$shortRev');
+            }
           }
         }
-      }
-
-      final points = <String>[];
-      if (editorial != null && editorial.isNotEmpty) {
-        points.add('【特徴】$editorial');
-      }
-      for (final rText in reviewTexts) {
-        if (points.length >= 3) break;
-        final shortRev =
-            rText.length > 75 ? '${rText.substring(0, 75)}...' : rText;
-        points.add('【来場者の声】「$shortRev」');
-      }
-      if (points.isEmpty) {
-        points.add('Googleマップで高評価（$ratingBadge）を集める人気お出かけスポット');
       }
 
       // 駐車場オプション解析
@@ -1901,6 +1972,24 @@ class GeminiOutingService {
         }
       }
 
+      // カテゴリとタグの決定
+      final SpotCategory category =
+          targetCategory ?? _guessSpotCategory(rawTitle, editorial ?? '');
+
+      // おすすめポイント（Googleマップのレビューとは分離し、スポット自体の魅力・特徴・設備を表示）
+      final points = <String>[];
+      if (editorial != null && editorial.isNotEmpty) {
+        points.add(editorial);
+      } else {
+        points.add('${category.icon} ${category.label}として家族や夫婦のお出かけに人気のスポット');
+      }
+      points.add('📍 エリア: $rawAddress（$parkingLabel）');
+      if (raw['goodForChildren'] == true) {
+        points.add('🧒 小学生・お子様連れファミリーにもおすすめのスポット');
+      } else {
+        points.add('🕒 $scheduleLabel ｜ 周辺の観光やグルメ巡りにも好アクセス');
+      }
+
       // アドバイス抽出
       String tipText = 'お出かけやイベント帰りの立ち寄りスポットとしてもおすすめです。';
       for (final rText in reviewTexts) {
@@ -1912,14 +2001,11 @@ class GeminiOutingService {
             rText.contains('遊具')) {
           final snippet =
               rText.length > 80 ? '${rText.substring(0, 80)}...' : rText;
-          tipText = 'クチコミ情報：「$snippet」';
+          tipText = 'ドライブメモ：「$snippet」';
           break;
         }
       }
 
-      // カテゴリとタグの決定
-      final SpotCategory category =
-          targetCategory ?? _guessSpotCategory(rawTitle, editorial ?? '');
       final tags = <SpotTag>{};
       if (hasFreeParking) tags.add(SpotTag.freeParking);
       if (category == SpotCategory.park) {
@@ -1934,6 +2020,9 @@ class GeminiOutingService {
       } else if (category == SpotCategory.smallPark) {
         tags.add(SpotTag.nature);
         tags.add(SpotTag.freeEntry);
+      } else if (category == SpotCategory.tourism) {
+        tags.add(SpotTag.nature);
+        tags.add(SpotTag.baby);
       } else if (category == SpotCategory.sightseeing) {
         tags.add(SpotTag.baby);
       } else if (category == SpotCategory.dining) {
@@ -1970,6 +2059,9 @@ class GeminiOutingService {
                   : '☀️ お出かけスポット'),
           sourceInfo: 'Google Places リアルタイム検索$ratingBadge',
           url: spotUrl,
+          googleRating: rating,
+          googleRatingCount: ratingCount > 0 ? ratingCount : null,
+          googleReviews: formattedGoogleReviews,
         ),
       );
     }
@@ -2352,6 +2444,17 @@ $candidateListText
         t.contains('市場') ||
         t.contains('直売所')) {
       return SpotCategory.gourmet;
+    }
+    if (t.contains('展望') ||
+        t.contains('城') ||
+        t.contains('渓谷') ||
+        t.contains('滝') ||
+        t.contains('名所') ||
+        t.contains('観光') ||
+        t.contains('お釜') ||
+        t.contains('松島') ||
+        t.contains('鍾乳洞')) {
+      return SpotCategory.tourism;
     }
     if (t.contains('特別展') ||
         t.contains('スタンプラリー') ||

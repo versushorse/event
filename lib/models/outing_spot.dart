@@ -31,6 +31,7 @@ enum SpotCategory {
   event('期間限定イベント', '🎪'),
   gourmet('グルメ・マルシェ', '🍠'),
   dining('地元グルメ・食事処', '🍽️'),
+  tourism('観光地・名所', '📸'),
   park('大きな公園（小学生）', '🏃'),
   onsen('温泉・日帰り銭湯', '♨️'),
   indoor('屋内スポット', '🏛️'),
@@ -493,6 +494,15 @@ class OutingSpot {
   /// 💮 行ったときの思い出ひとことメモ
   final String visitedMemory;
 
+  /// ⭐ Googleマップの星評価（例: 4.3）
+  final double? googleRating;
+
+  /// 💬 Googleマップのクチコミ件数（例: 320）
+  final int? googleRatingCount;
+
+  /// 💬 Googleマップの実際のレビュー抜粋リスト
+  final List<String> googleReviews;
+
   const OutingSpot({
     required this.id,
     required this.title,
@@ -518,7 +528,24 @@ class OutingSpot {
     this.visitedDate = '',
     this.visitedRating = 5,
     this.visitedMemory = '',
+    this.googleRating,
+    this.googleRatingCount,
+    this.googleReviews = const [],
   });
+
+  /// Googleマップの評価・レビュー情報が存在するかどうか
+  bool get hasGoogleReviewData =>
+      (googleRating != null && googleRating! > 0) || googleReviews.isNotEmpty;
+
+  /// Googleマップの星評価ラベル（例: '⭐ 4.3 (240件)'）
+  String get googleRatingBadgeText {
+    if (googleRating == null || googleRating! <= 0) return '';
+    final r = googleRating!.toStringAsFixed(1);
+    if (googleRatingCount != null && googleRatingCount! > 0) {
+      return '⭐ $r ($googleRatingCount件)';
+    }
+    return '⭐ $r';
+  }
 
   /// 車での所要時間を「約1時間15分」のような文字列に変換する
   String get driveTimeLabel {
@@ -705,6 +732,9 @@ class OutingSpot {
     String? visitedDate,
     int? visitedRating,
     String? visitedMemory,
+    double? googleRating,
+    int? googleRatingCount,
+    List<String>? googleReviews,
   }) {
     return OutingSpot(
       id: id ?? this.id,
@@ -731,6 +761,9 @@ class OutingSpot {
       visitedDate: visitedDate ?? this.visitedDate,
       visitedRating: visitedRating ?? this.visitedRating,
       visitedMemory: visitedMemory ?? this.visitedMemory,
+      googleRating: googleRating ?? this.googleRating,
+      googleRatingCount: googleRatingCount ?? this.googleRatingCount,
+      googleReviews: googleReviews ?? this.googleReviews,
     );
   }
 
@@ -761,6 +794,9 @@ class OutingSpot {
       'visitedDate': visitedDate,
       'visitedRating': visitedRating,
       'visitedMemory': visitedMemory,
+      if (googleRating != null) 'googleRating': googleRating,
+      if (googleRatingCount != null) 'googleRatingCount': googleRatingCount,
+      if (googleReviews.isNotEmpty) 'googleReviews': googleReviews,
     };
   }
 
@@ -780,6 +816,9 @@ class OutingSpot {
 
     final rawPoints = json['recommendPoints'] as List<dynamic>? ?? [];
     final points = rawPoints.map((p) => p.toString()).toList();
+
+    final rawReviews = json['googleReviews'] as List<dynamic>? ?? [];
+    final reviews = rawReviews.map((r) => r.toString()).toList();
 
     return OutingSpot(
       id: json['id'] as String? ?? '',
@@ -806,6 +845,9 @@ class OutingSpot {
       visitedDate: json['visitedDate'] as String? ?? '',
       visitedRating: (json['visitedRating'] as num?)?.toInt() ?? 5,
       visitedMemory: json['visitedMemory'] as String? ?? '',
+      googleRating: (json['googleRating'] as num?)?.toDouble(),
+      googleRatingCount: (json['googleRatingCount'] as num?)?.toInt(),
+      googleReviews: reviews,
     );
   }
 }

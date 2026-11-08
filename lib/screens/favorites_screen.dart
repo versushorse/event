@@ -17,6 +17,8 @@ class FavoritesScreen extends StatefulWidget {
   final ValueChanged<OutingSpot> onOpenSpotDetail;
   final VoidCallback onTriggerSync;
   final String syncStatusLabel;
+  final PartnerPick myRole;
+  final ValueChanged<PartnerPick>? onChangeMyRole;
 
   const FavoritesScreen({
     super.key,
@@ -29,6 +31,8 @@ class FavoritesScreen extends StatefulWidget {
     required this.onOpenSpotDetail,
     required this.onTriggerSync,
     required this.syncStatusLabel,
+    this.myRole = PartnerPick.husband,
+    this.onChangeMyRole,
   });
 
   @override
@@ -37,6 +41,7 @@ class FavoritesScreen extends StatefulWidget {
 
 class _FavoritesScreenState extends State<FavoritesScreen> {
   PartnerPick? _selectedFilter;
+  SpotCategory? _selectedCategoryFilter;
   bool _onlyVisitedFilter = false;
 
   @override
@@ -48,6 +53,10 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     final filteredSpots = widget.favoriteSpots.where((s) {
       if (_onlyVisitedFilter && !s.isVisited) return false;
       if (_selectedFilter != null && s.pickedBy != _selectedFilter) {
+        return false;
+      }
+      if (_selectedCategoryFilter != null &&
+          s.category != _selectedCategoryFilter) {
         return false;
       }
       return true;
@@ -159,17 +168,68 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: 8),
+              // このスマホが夫か妻かの設定バー（ハート押下時に自動識別）
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: colorScheme.surface.withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    const Text(
+                      '📱 このスマホ:',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      visualDensity: VisualDensity.compact,
+                      label: const Text('🙋‍♂️ 夫（パパ）',
+                          style: TextStyle(fontSize: 12)),
+                      selected: widget.myRole == PartnerPick.husband,
+                      onSelected: (_) =>
+                          widget.onChangeMyRole?.call(PartnerPick.husband),
+                    ),
+                    const SizedBox(width: 6),
+                    ChoiceChip(
+                      visualDensity: VisualDensity.compact,
+                      label: const Text('🙋‍♀️ 妻（ママ）',
+                          style: TextStyle(fontSize: 12)),
+                      selected: widget.myRole == PartnerPick.wife,
+                      onSelected: (_) =>
+                          widget.onChangeMyRole?.call(PartnerPick.wife),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '※❤️を押すと自動で識別',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
 
-        // 誰が気になるか ＆ 💮行ったよ！スタンプ帳の絞り込みチップ
+        // 1段目：誰が気になるか ＆ 💮行ったよ！スタンプ帳の絞り込みチップ
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
           child: Row(
             children: [
               FilterChip(
+                visualDensity: VisualDensity.compact,
                 label: Text('すべて (${widget.favoriteSpots.length})'),
                 selected: _selectedFilter == null && !_onlyVisitedFilter,
                 onSelected: (_) => setState(() {
@@ -177,8 +237,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   _onlyVisitedFilter = false;
                 }),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               FilterChip(
+                visualDensity: VisualDensity.compact,
                 avatar: const Text('💮'),
                 label: Text('行ったよ！思い出 ($visitedCount)'),
                 selected: _onlyVisitedFilter,
@@ -188,14 +249,15 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   if (val) _selectedFilter = null;
                 }),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               ...PartnerPick.values.map((pick) {
                 final count = widget.favoriteSpots
                     .where((s) => s.pickedBy == pick)
                     .length;
                 return Padding(
-                  padding: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.only(right: 6),
                   child: FilterChip(
+                    visualDensity: VisualDensity.compact,
                     avatar: Text(pick.icon),
                     label: Text('${pick.label} ($count)'),
                     selected: _selectedFilter == pick && !_onlyVisitedFilter,
@@ -204,6 +266,47 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                         _onlyVisitedFilter = false;
                         _selectedFilter =
                             _selectedFilter == pick ? null : pick;
+                      });
+                    },
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+
+        // 2段目：ジャンル別フィルターボタン（食事処・観光地・温泉・公園など）
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
+          child: Row(
+            children: [
+              FilterChip(
+                visualDensity: VisualDensity.compact,
+                label: const Text('📂 全ジャンル'),
+                selected: _selectedCategoryFilter == null,
+                selectedColor: colorScheme.primaryContainer,
+                onSelected: (_) => setState(() {
+                  _selectedCategoryFilter = null;
+                }),
+              ),
+              const SizedBox(width: 6),
+              ...SpotCategory.values.map((cat) {
+                final count = widget.favoriteSpots
+                    .where((s) => s.category == cat)
+                    .length;
+                final isSelected = _selectedCategoryFilter == cat;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: FilterChip(
+                    visualDensity: VisualDensity.compact,
+                    avatar: Text(cat.icon),
+                    label: Text('${cat.label} ($count)'),
+                    selected: isSelected,
+                    selectedColor: colorScheme.primaryContainer,
+                    onSelected: (_) {
+                      setState(() {
+                        _selectedCategoryFilter = isSelected ? null : cat;
                       });
                     },
                   ),
@@ -335,6 +438,27 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                             ),
                           ),
                         ),
+                        if (pick != PartnerPick.both &&
+                            pick != widget.myRole)
+                          ActionChip(
+                            visualDensity: VisualDensity.compact,
+                            avatar: const Text('💑'),
+                            label: const Text(
+                              '私も行きたい！',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            backgroundColor: Colors.pink.shade50,
+                            onPressed: () {
+                              widget.onUpdateFavorite(
+                                spot,
+                                PartnerPick.both,
+                                spot.coupleNote,
+                              );
+                            },
+                          ),
                         Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 4),
@@ -432,6 +556,72 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 ),
               ],
 
+              // 💬 Googleマップのレビュー・評価枠（ある場合は別枠で表示）
+              if (spot.hasGoogleReviewData) ...[
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Text('💬 ', style: TextStyle(fontSize: 14)),
+                          Text(
+                            'Googleマップのレビュー',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue.shade900,
+                            ),
+                          ),
+                          if (spot.googleRatingBadgeText.isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.shade100,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                spot.googleRatingBadgeText,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.brown.shade900,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (spot.googleReviews.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        ...spot.googleReviews.take(2).map(
+                              (rev) => Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(
+                                  '・$rev',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: Colors.blueGrey.shade900,
+                                  ),
+                                ),
+                              ),
+                            ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+
               // 夫婦のひとことメモ欄
               Container(
                 width: double.infinity,
@@ -499,7 +689,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 ),
               ),
 
-              // 💮行ったよスタンプ ＆ 設定・メモ ＆ LINE共有ボタン
+              // 💮行ったよスタンプ ＆ メモ編集 ＆ LINE共有ボタン
               Row(
                 children: [
                   Expanded(
@@ -516,9 +706,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: () => _showEditFavoriteDialog(context, spot),
-                      icon: const Icon(Icons.people_alt_outlined, size: 16),
+                      icon: const Icon(Icons.edit_note, size: 16),
                       label:
-                          const Text('設定・メモ', style: TextStyle(fontSize: 12)),
+                          const Text('メモ編集', style: TextStyle(fontSize: 12)),
                     ),
                   ),
                   const SizedBox(width: 6),

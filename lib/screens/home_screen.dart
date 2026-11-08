@@ -107,6 +107,10 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 夫婦共有ルームの合言葉
   String _coupleRoomCode = 'family-weekend';
 
+  /// このスマホの使用者（夫 or 妻。ハートを押した時点で自動識別）
+  PartnerPick _myRole = PartnerPick.husband;
+  bool _hasSelectedMyRole = false;
+
   /// 夫婦同期のステータス文字列
   String _syncStatusLabel = '確認中...';
 
@@ -330,10 +334,17 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 夫婦間のローカル保存およびクラウド同期の初期化
   Future<void> _initCoupleSync() async {
     final code = await CoupleSyncService.getRoomCode();
+    final savedRole = await CoupleSyncService.getMyRole();
     var savedFavs = await CoupleSyncService.loadLocalFavorites();
     final savedTrips = await CoupleSyncService.loadLocalTrips();
     if (mounted) {
-      setState(() => _tripPlans = savedTrips);
+      setState(() {
+        _tripPlans = savedTrips;
+        if (savedRole != null) {
+          _myRole = savedRole;
+          _hasSelectedMyRole = true;
+        }
+      });
     }
 
     final prefs = await SharedPreferences.getInstance();
@@ -492,14 +503,15 @@ class _HomeScreenState extends State<HomeScreen> {
   List<OutingSpot> get _favoriteSpots =>
       _allSpots.where((s) => s.isFavorite).toList();
 
-  /// ジャンルボタンをタップしたときの検索
+  /// ジャンルボタンをタップしたときの検索（検索窓に「山寺」等の目的地が入力されていれば掛け合わせ検索！）
   Future<void> _selectGenreAndSearch(SpotCategory? category) async {
+    final currentInput = _searchController.text.trim();
     setState(() {
       _selectedCategory = category;
       _selectedTag = null;
       _anchorSpot = null;
     });
-    await _runAiSearch(null, category);
+    await _runAiSearch(currentInput.isNotEmpty ? currentInput : null, category);
   }
 
   /// 地域タブ（東北6県）をタップしたときの検索
@@ -839,16 +851,112 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// お気に入りON/OFF切り替え
+  /// ドライブ地図の周辺ジャンル絞り込みをOFF（クリア）に戻す
+  void _clearMapAreaCategory() {
+    setState(() {
+      _mapAreaCategory = null;
+      _anchorSpot = null;
+      _activeSearchResultIds = null;
+    });
+    _runAiSearch(null, _selectedCategory);
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('🔄 周辺ジャンルの絞り込みをOFF（クリア）にしました'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// このスマホの使用者（夫 / 妻）を切り替えて保存する
+  Future<void> _setMyRole(PartnerPick role) async {
+    setState(() {
+      _myRole = role;
+      _hasSelectedMyRole = true;
+    });
+    await CoupleSyncService.saveMyRole(role);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '📱 このスマホを「${role.icon} ${role == PartnerPick.wife ? "妻（ママ）" : "夫（パパ）"}」に設定しました！ハートを押すと自動で識別されます',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// 初回ハート押下時に1回だけ「このスマホは夫 / 妻どちらですか？」を確認するダイアログ
+  Future<PartnerPick?> _promptMyRoleFirstTime() async {
+    return showDialog<PartnerPick>(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Text('📱 ', style: TextStyle(fontSize: 22)),
+              Expanded(child: Text('このスマホはどちらですか？')),
+            ],
+          ),
+          content: const Text(
+            '1回選ぶだけで、今後はハート❤️を押した時点で自動的に「夫が気になる」「妻が気になる」として識別されます！\n（※画面右上からいつでも変更できます）',
+            style: TextStyle(fontSize: 13.5, height: 1.45),
+          ),
+          actionsAlignment: MainAxisAlignment.spaceEvenly,
+          actions: [
+            FilledButton.tonalIcon(
+              onPressed: () => Navigator.of(dialogCtx).pop(PartnerPick.husband),
+              icon: const Text('🙋‍♂️', style: TextStyle(fontSize: 18)),
+              label: const Text('夫（パパ）',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(dialogCtx).pop(PartnerPick.wife),
+              icon: const Text('🙋‍♀️', style: TextStyle(fontSize: 18)),
+              label: const Text('妻（ママ）',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// お気に入りON/OFF切り替え（ハートを押した時点で夫か妻かを自動識別！）
   Future<void> _toggleFavorite(OutingSpot target) async {
+    if (!target.isFavorite && !_hasSelectedMyRole) {
+      final chosen = await _promptMyRoleFirstTime();
+      if (chosen != null) {
+        await _setMyRole(chosen);
+      } else {
+        _hasSelectedMyRole = true;
+        await CoupleSyncService.saveMyRole(_myRole);
+      }
+    }
+
+    bool upgradedToBoth = false;
     setState(() {
       _allSpots = _allSpots.map((spot) {
         if (spot.id != target.id) return spot;
-        final nextFav = !spot.isFavorite;
-        return spot.copyWith(
-          isFavorite: nextFav,
-          pickedBy: nextFav ? (spot.pickedBy ?? PartnerPick.both) : spot.pickedBy,
-        );
+        if (!spot.isFavorite) {
+          // ハートを押した時点でこのスマホの使用者（夫 or 妻）を自動セット！
+          return spot.copyWith(
+            isFavorite: true,
+            pickedBy: _myRole,
+          );
+        } else if (spot.pickedBy != null &&
+            spot.pickedBy != _myRole &&
+            spot.pickedBy != PartnerPick.both) {
+          // 相手がすでにハートを付けていたスポットに自分もハートを押したら「💑 2人とも行きたい！」に昇格！
+          upgradedToBoth = true;
+          return spot.copyWith(
+            isFavorite: true,
+            pickedBy: PartnerPick.both,
+          );
+        } else {
+          return spot.copyWith(isFavorite: false);
+        }
       }).toList();
       if (_selectedMapSpot?.id == target.id) {
         _selectedMapSpot = _allSpots.firstWhere((s) => s.id == target.id);
@@ -870,12 +978,15 @@ class _HomeScreenState extends State<HomeScreen> {
     final updated = _allSpots.firstWhere((s) => s.id == target.id);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
+    final pickBadge = updated.pickedBy ?? _myRole;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          updated.isFavorite
-              ? '❤️ 「${updated.title}」を夫婦の行きたい！に追加しました'
-              : '「${updated.title}」を行きたい！リストから外しました',
+          upgradedToBoth
+              ? '💑 「${updated.title}」が『2人とも行きたい！』になりました！'
+              : updated.isFavorite
+                  ? '❤️ 「${updated.title}」を【${pickBadge.icon} ${pickBadge.label}】として追加しました！'
+                  : '「${updated.title}」を行きたい！リストから外しました',
         ),
         duration: const Duration(seconds: 2),
       ),
@@ -1359,6 +1470,35 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// ボトムナビのメインタブ（0:AI検索, 1:ドライブ地図, 2:夫婦の行きたい！, 3:旅のしおり）を切り替える
+  void _selectBottomTab(int index) {
+    final target = index.clamp(0, 3);
+    if (target == _currentTabIndex) return;
+    setState(() => _currentTabIndex = target);
+    if (target == 1 && _selectedMapSpot != null && _mapController != null) {
+      _mapController!.animateCamera(
+        CameraUpdate.newLatLng(
+          LatLng(_selectedMapSpot!.latitude, _selectedMapSpot!.longitude),
+        ),
+      );
+    } else if (target == 2 || target == 3) {
+      _triggerCloudSync();
+    }
+  }
+
+  /// 左右スワイプでメインタブ（AI提案・検索 ⇄ ドライブ地図 ⇄ 夫婦の行きたい！ ⇄ 旅のしおり）を移動する
+  void _handleHorizontalTabSwipe(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0.0;
+    if (velocity.abs() < 260) return;
+    if (velocity < 0 && _currentTabIndex < 3) {
+      // 左へスワイプ ➔ 次のタブへ
+      _selectBottomTab(_currentTabIndex + 1);
+    } else if (velocity > 0 && _currentTabIndex > 0) {
+      // 右へスワイプ ➔ 前のタブへ
+      _selectBottomTab(_currentTabIndex - 1);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -1366,21 +1506,23 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        toolbarHeight: 62,
         backgroundColor: colorScheme.surface,
         surfaceTintColor: colorScheme.surfaceTint,
         title: Row(
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(11),
               child: Image.asset(
                 'assets/images/app_icon.png',
-                width: 30,
-                height: 30,
+                width: 42,
+                height: 42,
+                fit: BoxFit.cover,
                 errorBuilder: (_, _, _) =>
-                    const Text('🚗 ', style: TextStyle(fontSize: 22)),
+                    const Text('🚗 ', style: TextStyle(fontSize: 26)),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1402,6 +1544,31 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          // このスマホの使用者（夫 / 妻）ワンタップ切替バッジ
+          Padding(
+            padding: const EdgeInsets.only(right: 2),
+            child: ActionChip(
+              visualDensity: VisualDensity.compact,
+              tooltip: 'タップで「夫 / 妻」を切替（ハート押下時に自動識別）',
+              avatar: Text(
+                _myRole.icon,
+                style: const TextStyle(fontSize: 13),
+              ),
+              label: Text(
+                _myRole == PartnerPick.wife ? '妻' : '夫',
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              onPressed: () {
+                final nextRole = _myRole == PartnerPick.husband
+                    ? PartnerPick.wife
+                    : PartnerPick.husband;
+                _setMyRole(nextRole);
+              },
+            ),
+          ),
           IconButton(
             tooltip: '📅 イベント期間指定',
             onPressed: () => _showDateRangeSelectorSheet(context),
@@ -1422,30 +1589,44 @@ class _HomeScreenState extends State<HomeScreen> {
       body: IndexedStack(
         index: _currentTabIndex,
         children: [
-          _buildExploreTab(context),
-          _buildGoogleMapTab(context),
-          FavoritesScreen(
-            favoriteSpots: _favoriteSpots,
-            coupleRoomCode: _coupleRoomCode,
-            syncStatusLabel: _syncStatusLabel,
-            onTriggerSync: _triggerCloudSync,
-            onRoomCodeChanged: (code) async {
-              setState(() => _coupleRoomCode = code);
-              await CoupleSyncService.saveRoomCode(code);
-              _triggerCloudSync();
-            },
-            onUpdateFavorite: _updateFavoriteDetail,
-            onUpdateVisitedSpot: _updateVisitedSpot,
-            onRemoveFavorite: _toggleFavorite,
-            onOpenSpotDetail: (spot) => _showSpotDetailSheet(context, spot),
+          GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragEnd: _handleHorizontalTabSwipe,
+            child: _buildExploreTab(context),
           ),
-          TripPlannerScreen(
-            tripPlans: _tripPlans,
-            selectedTripIndex: _selectedTripIndex,
-            onSelectTrip: (idx) => setState(() => _selectedTripIndex = idx),
-            onUpdateTrips: _updateTripPlans,
-            coupleRoomCode: _coupleRoomCode,
-            onTriggerSync: _triggerCloudSync,
+          _buildGoogleMapTab(context),
+          GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragEnd: _handleHorizontalTabSwipe,
+            child: FavoritesScreen(
+              favoriteSpots: _favoriteSpots,
+              coupleRoomCode: _coupleRoomCode,
+              syncStatusLabel: _syncStatusLabel,
+              myRole: _myRole,
+              onChangeMyRole: _setMyRole,
+              onTriggerSync: _triggerCloudSync,
+              onRoomCodeChanged: (code) async {
+                setState(() => _coupleRoomCode = code);
+                await CoupleSyncService.saveRoomCode(code);
+                _triggerCloudSync();
+              },
+              onUpdateFavorite: _updateFavoriteDetail,
+              onUpdateVisitedSpot: _updateVisitedSpot,
+              onRemoveFavorite: _toggleFavorite,
+              onOpenSpotDetail: (spot) => _showSpotDetailSheet(context, spot),
+            ),
+          ),
+          GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragEnd: _handleHorizontalTabSwipe,
+            child: TripPlannerScreen(
+              tripPlans: _tripPlans,
+              selectedTripIndex: _selectedTripIndex,
+              onSelectTrip: (idx) => setState(() => _selectedTripIndex = idx),
+              onUpdateTrips: _updateTripPlans,
+              coupleRoomCode: _coupleRoomCode,
+              onTriggerSync: _triggerCloudSync,
+            ),
           ),
         ],
       ),
@@ -1466,19 +1647,7 @@ class _HomeScreenState extends State<HomeScreen> {
           : null,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentTabIndex,
-        onDestinationSelected: (index) {
-          setState(() => _currentTabIndex = index);
-          if (index == 1 && _selectedMapSpot != null && _mapController != null) {
-            _mapController!.animateCamera(
-              CameraUpdate.newLatLng(
-                LatLng(_selectedMapSpot!.latitude, _selectedMapSpot!.longitude),
-              ),
-            );
-          } else if (index == 2 || index == 3) {
-            // 「夫婦の行きたい！」または「旅のしおり」タブを開いたときに自動で最新同期を取得
-            _triggerCloudSync();
-          }
-        },
+        onDestinationSelected: _selectBottomTab,
         destinations: [
           const NavigationDestination(
             icon: Icon(Icons.explore_outlined),
@@ -1536,12 +1705,13 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 1. フリーワード検索ボックス（全国・県外地名もそのまま検索可能）
+                // 1. フリーワード検索ボックス（目的地＋下のジャンルボタンで周辺検索も可能）
                 TextField(
                   controller: _searchController,
+                  onChanged: (_) => setState(() {}),
                   onSubmitted: (_) => _runAiSearch(),
                   decoration: InputDecoration(
-                    hintText: 'キーワードや県外地名で検索（例：那須 温泉、天童 公園）',
+                    hintText: '目的地・キーワード（例：山寺、松島）＋下のボタンで周辺検索！',
                     prefixIcon:
                         Icon(Icons.auto_awesome, color: colorScheme.primary),
                     suffixIcon: Row(
@@ -1552,6 +1722,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             tooltip: 'クリア',
                             onPressed: () {
                               _searchController.clear();
+                              setState(() {});
                               _runAiSearch(null, _selectedCategory);
                             },
                             icon: const Icon(Icons.clear, size: 20),
@@ -2222,6 +2393,24 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                         ),
+                        if (spot.isFavorite && spot.pickedBy != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.pink.shade50,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: Colors.pink.shade200),
+                            ),
+                            child: Text(
+                              '${spot.pickedBy!.icon} ${spot.pickedBy!.label}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.pink.shade800,
+                              ),
+                            ),
+                          ),
                         if (spot.isVisited)
                           Container(
                             padding: const EdgeInsets.symmetric(
@@ -2381,6 +2570,93 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               }),
               const SizedBox(height: 10),
+
+              // 💬 Googleマップのレビュー・クチコミ（おすすめポイントとは別枠で表示！）
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50.withValues(alpha: 0.65),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blue.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text('💬 ', style: TextStyle(fontSize: 14)),
+                        Text(
+                          'Googleマップのレビュー・評価',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue.shade900,
+                          ),
+                        ),
+                        if (spot.googleRatingBadgeText.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.shade100,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              spot.googleRatingBadgeText,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.brown.shade900,
+                              ),
+                            ),
+                          ),
+                        ],
+                        const Spacer(),
+                        InkWell(
+                          onTap: () => _launchGoogleMaps(spot),
+                          child: Text(
+                            'クチコミを見る ➔',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue.shade800,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (spot.googleReviews.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      ...spot.googleReviews.take(2).map(
+                            (rev) => Padding(
+                              padding: const EdgeInsets.only(bottom: 3),
+                              child: Text(
+                                '• $rev',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  height: 1.35,
+                                  color: Colors.blueGrey.shade900,
+                                ),
+                              ),
+                            ),
+                          ),
+                    ] else ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        '📍「${spot.title}」の最新クチコミ・写真をGoogleマップで確認できます',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: Colors.blueGrey.shade800,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
 
               // 公式サイト・元記事リンクボタン
               Padding(
@@ -2708,12 +2984,34 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 6),
 
-              // 3段目：「この地図エリア周辺」ワンタップジャンル検索チップ
+              // 3段目：「この地図エリア周辺」ワンタップジャンル検索チップ（再タップでOFF/クリア可能！）
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
                   children: [
+                    if (_mapAreaCategory != null)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: ActionChip(
+                          avatar: const Icon(Icons.close,
+                              size: 15, color: Colors.red),
+                          label: const Text(
+                            'クリア（解除）',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.red,
+                            ),
+                          ),
+                          backgroundColor: Colors.red.shade50,
+                          side: BorderSide(color: Colors.red.shade300),
+                          visualDensity: VisualDensity.compact,
+                          onPressed:
+                              _isSearchingAi ? null : _clearMapAreaCategory,
+                        ),
+                      ),
                     _buildMapGenreChip(SpotCategory.dining, '🍽️ 周辺の食事処・ランチ'),
+                    _buildMapGenreChip(SpotCategory.tourism, '📸 周辺の観光地・名所'),
                     _buildMapGenreChip(SpotCategory.onsen, '♨️ 周辺の温泉・銭湯'),
                     _buildMapGenreChip(SpotCategory.sightseeing, '⛩️ 周辺の神社仏閣'),
                     _buildMapGenreChip(SpotCategory.park, '🏃 周辺の大きな公園'),
@@ -2725,6 +3023,28 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ],
+          ),
+        ),
+
+        // 画面左右端のスワイプ検出ゾーン（地図ドラッグと干渉せずメインタブ移動を可能にする）
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: 22,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragEnd: _handleHorizontalTabSwipe,
+          ),
+        ),
+        Positioned(
+          right: 0,
+          top: 0,
+          bottom: 0,
+          width: 22,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragEnd: _handleHorizontalTabSwipe,
           ),
         ),
 
@@ -3015,14 +3335,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// ドライブ地図上部のジャンルチップ1個分
+  /// ドライブ地図上部のジャンルチップ1個分（もう一度押すとOFF/クリアになる）
   Widget _buildMapGenreChip(SpotCategory category, String label) {
     final isSelected = _mapAreaCategory == category;
     return Padding(
       padding: const EdgeInsets.only(right: 6),
       child: ActionChip(
         label: Text(
-          label,
+          isSelected ? '$label ✕' : label,
           style: TextStyle(
             fontSize: 12,
             fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
@@ -3034,11 +3354,18 @@ class _HomeScreenState extends State<HomeScreen> {
             : Colors.white.withValues(alpha: 0.95),
         side: BorderSide(
           color: isSelected ? Colors.teal.shade600 : Colors.grey.shade300,
+          width: isSelected ? 1.5 : 1.0,
         ),
         visualDensity: VisualDensity.compact,
         onPressed: _isSearchingAi
             ? null
-            : () => _runMapAreaSearch(category: category),
+            : () {
+                if (isSelected) {
+                  _clearMapAreaCategory();
+                } else {
+                  _runMapAreaSearch(category: category);
+                }
+              },
       ),
     );
   }
@@ -3178,6 +3505,96 @@ class _HomeScreenState extends State<HomeScreen> {
                       )),
                   const SizedBox(height: 12),
 
+                  // 💬 Googleマップのレビュー・評価枠（おすすめポイントとは別枠で表示）
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50.withValues(alpha: 0.75),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Text('💬 ', style: TextStyle(fontSize: 16)),
+                            Text(
+                              'Googleマップのレビュー・評価',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue.shade900,
+                              ),
+                            ),
+                            if (spot.googleRatingBadgeText.isNotEmpty) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.amber.shade100,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  spot.googleRatingBadgeText,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.brown.shade900,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        if (spot.googleReviews.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          ...spot.googleReviews.map(
+                            (rev) => Padding(
+                              padding: const EdgeInsets.only(bottom: 5),
+                              child: Text(
+                                '• $rev',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  height: 1.4,
+                                  color: Colors.blueGrey.shade900,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ] else ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            'Googleマップで実際の来場者クチコミ・写真を確認できます。',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: Colors.blueGrey.shade800,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 6),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            onPressed: () => _launchGoogleMaps(spot),
+                            icon: const Icon(Icons.rate_review_outlined,
+                                size: 16),
+                            label: const Text(
+                              'Googleマップでクチコミ・写真をすべて見る',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
                   // このスポット周辺の立ち寄り先をワンタップで地図検索できるボックス
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -3206,6 +3623,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                 Navigator.of(sheetContext).pop();
                                 _jumpToMapAndSearchNearby(
                                     spot, SpotCategory.dining);
+                              },
+                            ),
+                            ActionChip(
+                              label: const Text('📸 近くの観光地・名所',
+                                  style: TextStyle(fontSize: 12)),
+                              onPressed: () {
+                                Navigator.of(sheetContext).pop();
+                                _jumpToMapAndSearchNearby(
+                                    spot, SpotCategory.tourism);
                               },
                             ),
                             ActionChip(

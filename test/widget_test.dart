@@ -27,6 +27,7 @@ void main() {
     expect(find.text('期間限定イベント'), findsWidgets);
     expect(find.text('グルメ・マルシェ'), findsWidgets);
     expect(find.text('地元グルメ・食事処'), findsWidgets);
+    expect(find.text('観光地・名所'), findsWidgets);
     expect(find.text('温泉・日帰り銭湯'), findsWidgets);
 
     // 夫婦の好みAIナビが表示されていることを確認
@@ -76,6 +77,11 @@ void main() {
     await CoupleSyncService.saveRoomCode(room);
     final loadedRoom = await CoupleSyncService.getRoomCode();
     expect(loadedRoom, room);
+
+    // スマホ使用者（夫 or 妻）の設定・取得テスト（ハート押下時の自動識別用）
+    await CoupleSyncService.saveMyRole(PartnerPick.wife);
+    final loadedRole = await CoupleSyncService.getMyRole();
+    expect(loadedRole, PartnerPick.wife);
 
     final spots = GeminiOutingService.getInitialSpots().take(2).toList();
     final text = CoupleSyncService.exportFavoritesShareText(spots, room);
