@@ -1,11 +1,11 @@
 {
-    "name": "weekend_outing",
-    "short_name": "weekend_outing",
-    "start_url": ".",
+    "name": "週末どこ行く？AIナビ",
+    "short_name": "週末AIナビ",
+    "start_url": "./",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FDF4E2",
+    "theme_color": "#FDF4E2",
+    "description": "東北6県のお出かけスポット・イベント・ドライブ計画をAIがサポートする週末ナビ",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
