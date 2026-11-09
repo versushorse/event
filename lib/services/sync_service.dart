@@ -121,6 +121,27 @@ class CoupleSyncService {
     };
     final jsonStr = jsonEncode(payload);
 
+    // 1. Firebase Realtime Database に保存
+    final firebaseBaseUrl = AppApiKeys.firebaseRealtimeDbUrl.trim();
+    if (firebaseBaseUrl.isNotEmpty) {
+      try {
+        final cleanBaseUrl = firebaseBaseUrl.endsWith('/')
+            ? firebaseBaseUrl.substring(0, firebaseBaseUrl.length - 1)
+            : firebaseBaseUrl;
+        final endpoint = Uri.parse('$cleanBaseUrl/trips/$sanitizedCode.json');
+        await http
+            .put(
+              endpoint,
+              headers: {'Content-Type': 'application/json'},
+              body: jsonStr,
+            )
+            .timeout(const Duration(seconds: 8));
+      } catch (e) {
+        debugPrint('しおりFirebaseプッシュエラー: $e');
+      }
+    }
+
+    // 2. ntfy.sh (PubSub) にも即時通知
     final cdnTopic = 'weekend_outing_trips_$sanitizedCode';
     try {
       final cdnPostUrl = Uri.parse('https://ntfy.sh/$cdnTopic');
@@ -150,6 +171,30 @@ class CoupleSyncService {
 
     int cloudTimestamp = 0;
     List<TripPlan>? cloudTrips;
+
+    // 1. Firebase Realtime Database から最新しおりを取得
+    final firebaseBaseUrl = AppApiKeys.firebaseRealtimeDbUrl.trim();
+    if (firebaseBaseUrl.isNotEmpty) {
+      try {
+        final cleanBaseUrl = firebaseBaseUrl.endsWith('/')
+            ? firebaseBaseUrl.substring(0, firebaseBaseUrl.length - 1)
+            : firebaseBaseUrl;
+        final endpoint = Uri.parse('$cleanBaseUrl/trips/$sanitizedCode.json');
+        final res = await http.get(endpoint).timeout(const Duration(seconds: 8));
+        if (res.statusCode == 200 && res.body.isNotEmpty && res.body != 'null') {
+          final decoded = jsonDecode(res.body);
+          if (decoded is Map<String, dynamic>) {
+            cloudTimestamp = (decoded['timestamp'] as num?)?.toInt() ?? 0;
+            final rawTrips = decoded['trips'] as List<dynamic>? ?? [];
+            cloudTrips = rawTrips
+                .map((item) => TripPlan.fromJson(item as Map<String, dynamic>))
+                .toList();
+          }
+        }
+      } catch (e) {
+        debugPrint('しおりFirebase取得エラー: $e');
+      }
+    }
 
     final cdnTopic = 'weekend_outing_trips_$sanitizedCode';
     final cdnPollUrl = Uri.parse('https://ntfy.sh/$cdnTopic/json?poll=1');
@@ -184,6 +229,10 @@ class CoupleSyncService {
     }
 
     if (cloudTrips == null || cloudTrips.isEmpty) {
+      // クラウドが空または12時間経過で消去された場合、ローカルにあれば自動再投入
+      if (currentLocal.isNotEmpty) {
+        await pushTripsToCloud(roomCode: roomCode, trips: currentLocal);
+      }
       return currentLocal;
     }
 
@@ -216,7 +265,7 @@ class CoupleSyncService {
     final payload = {
       'v': 1,
       'timestamp': nowMs,
-      'spots': favorites.map((s) => s.toJson()).toList(),
+      'spots': favorites.map((s) => s.toSyncJson()).toList(),
     };
     final jsonStr = jsonEncode(payload);
 
@@ -337,23 +386,46 @@ class CoupleSyncService {
             if (trimmed.isEmpty) continue;
             try {
               final obj = jsonDecode(trimmed) as Map<String, dynamic>;
-              if (obj['event'] == 'message' && obj['message'] != null) {
-                final msgStr = obj['message'] as String;
-                final parsed = jsonDecode(msgStr);
-                if (parsed is Map<String, dynamic>) {
-                  cloudTimestamp = (parsed['timestamp'] as num?)?.toInt() ?? 0;
-                  final rawSpots = parsed['spots'] as List<dynamic>? ?? [];
-                  cloudSpots = rawSpots
-                      .map((item) => OutingSpot.fromJson(
-                          item as Map<String, dynamic>))
-                      .toList();
-                } else if (parsed is List) {
-                  cloudSpots = parsed
-                      .map((item) => OutingSpot.fromJson(
-                          item as Map<String, dynamic>))
-                      .toList();
+              if (obj['event'] == 'message') {
+                String jsonBody = '';
+                // 4KB超えで添付ファイル化された場合はURLから直接ダウンロード
+                if (obj['attachment'] != null &&
+                    obj['attachment']['url'] != null) {
+                  final attachUrl = obj['attachment']['url'] as String;
+                  try {
+                    final attachRes = await http
+                        .get(Uri.parse(attachUrl))
+                        .timeout(const Duration(seconds: 4));
+                    if (attachRes.statusCode == 200) {
+                      jsonBody = attachRes.body;
+                    }
+                  } catch (_) {}
                 }
-                break;
+                if (jsonBody.isEmpty && obj['message'] != null) {
+                  jsonBody = obj['message'] as String;
+                }
+                if (jsonBody.isNotEmpty) {
+                  try {
+                    final parsed = jsonDecode(jsonBody);
+                    if (parsed is Map<String, dynamic>) {
+                      cloudTimestamp = (parsed['timestamp'] as num?)?.toInt() ?? 0;
+                      final rawSpots = parsed['spots'] as List<dynamic>? ?? [];
+                      cloudSpots = rawSpots
+                          .map((item) => OutingSpot.fromJson(
+                              item as Map<String, dynamic>))
+                          .toList();
+                      break;
+                    } else if (parsed is List) {
+                      cloudSpots = parsed
+                          .map((item) => OutingSpot.fromJson(
+                              item as Map<String, dynamic>))
+                          .toList();
+                      break;
+                    }
+                  } catch (e) {
+                    debugPrint('JSONパース注意: $e');
+                  }
+                }
               }
             } catch (_) {}
           }
@@ -400,8 +472,12 @@ class CoupleSyncService {
       }
     }
 
-    if (cloudSpots == null) {
-      // クラウドにまだ何もない場合はローカルをそのまま保持
+    if (cloudSpots == null || cloudSpots.isEmpty) {
+      // クラウドにまだ何もない、または12時間経過で一時消去された場合:
+      // ローカルにお気に入りがあれば自動で再プッシュしてクラウドを復活させる！
+      if (currentLocal.isNotEmpty) {
+        await pushToCloud(roomCode: roomCode, favorites: currentLocal);
+      }
       return currentLocal;
     }
 

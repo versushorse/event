@@ -47,7 +47,7 @@ android {
                 artifactType = "APK"
                 artifactPath = project.file("../../build/app/outputs/flutter-apk/app-release.apk").absolutePath
                 testers = "high.standard.derringer@gmail.com, orangeruby73.04sw1184@gmail.com"
-                releaseNotes = "詳細画面マップ位置ボタン追加・地図スワイプクラッシュ防止・グルメ集約・アプリアイコン拡大対応版"
+                releaseNotes = "Firebase公式リアルタイムデータベース同期・4KB制限解除・自動復元対応版"
             }
         }
     }

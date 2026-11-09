@@ -768,6 +768,29 @@ class OutingSpot {
   }
 
   /// 夫婦共有（JSON保存・クラウド通信）用のシリアライズ
+  /// クラウド同期用の超軽量シリアライズ（4KB制限対策・高速安定同期）
+  Map<String, dynamic> toSyncJson() {
+    return {
+      'id': id,
+      'title': title,
+      'subtitle': subtitle,
+      'category': category.name,
+      'address': address,
+      'latitude': latitude,
+      'longitude': longitude,
+      'driveMinutes': driveMinutes,
+      'distanceKm': distanceKm,
+      'isFavorite': isFavorite,
+      'pickedBy': pickedBy?.name,
+      'coupleNote': coupleNote,
+      'isVisited': isVisited,
+      'visitedDate': visitedDate,
+      'visitedRating': visitedRating,
+      'visitedMemory': visitedMemory,
+      if (url.isNotEmpty) 'url': url,
+    };
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,
