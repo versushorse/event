@@ -18,31 +18,41 @@ class CoupleSyncService {
   /// 無料KVS（設定不要のキーバリューストア）のAppKey
   static const String _fallbackKvsAppKey = '2pbg4ppa';
 
-  /// このスマホの使用者（夫 or 妻）を取得する（未設定ならnull）
+  /// このスマホの使用者（自分 / 夫 / 妻）を取得する（未設定ならnull）
   static Future<PartnerPick?> getMyRole() async {
     final prefs = await SharedPreferences.getInstance();
     final roleStr = prefs.getString(_prefMyRoleKey);
+    if (roleStr == PartnerPick.me.name) return PartnerPick.me;
     if (roleStr == PartnerPick.husband.name) return PartnerPick.husband;
     if (roleStr == PartnerPick.wife.name) return PartnerPick.wife;
     return null;
   }
 
-  /// このスマホの使用者（夫 or 妻）を保存する
+  /// このスマホの使用者（自分 / 夫 / 妻）を保存する
   static Future<void> saveMyRole(PartnerPick role) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefMyRoleKey, role.name);
   }
 
-  /// ローカルに保存された家族合言葉を取得する
+  /// ローカルに保存された共有合言葉を取得する（未設定なら端末固有のコードを自動生成）
   static Future<String> getRoomCode() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_prefRoomKey) ?? 'family-weekend';
+    var code = prefs.getString(_prefRoomKey);
+    if (code == null || code.trim().isEmpty) {
+      // 端末ごとにユニークな個別ルームコードを自動生成（例: spot-k9x2）
+      // 誰かと合言葉を共有しない限り、自分専用のプライベートリストとして完全に独立します
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final hash = (timestamp % 1679616).toRadixString(36).padLeft(4, '0');
+      code = 'spot-$hash';
+      await prefs.setString(_prefRoomKey, code);
+    }
+    return code;
   }
 
-  /// 家族合言葉を保存する
+  /// 共有合言葉を保存する
   static Future<void> saveRoomCode(String code) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefRoomKey, code);
+    await prefs.setString(_prefRoomKey, code.trim());
   }
 
   /// 夫婦のお気に入りリストをローカルストレージに永続保存する

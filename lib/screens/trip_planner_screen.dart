@@ -132,7 +132,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                     icon: const Icon(Icons.edit_outlined, size: 20),
                   ),
                   IconButton(
-                    tooltip: '夫婦のスマホと同期',
+                    tooltip: 'スマホ間で同期',
                     onPressed: widget.onTriggerSync,
                     icon: const Icon(Icons.sync, size: 20),
                   ),
@@ -197,7 +197,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
-                              '📋 旅のしおり全文をコピーしました！夫婦のLINEにそのまま貼り付けられます'),
+                              '📋 旅のしおり全文をコピーしました！LINEやメモ帳にそのまま貼り付けられます'),
                         ),
                       );
                     },
@@ -919,7 +919,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    '行き先や「ここに行きたい・これ食べたい」を入力すると、Geminiが小学生＆ご夫婦向けのタイムスケジュールを自動作成します（作成後に手動で自由に変更できます！）',
+                    '行き先や「ここに行きたい・これ食べたい」を入力すると、Geminiがお出かけ・旅行タイムスケジュールを自動作成します（作成後に手動で自由に変更できます！）',
                     style: TextStyle(fontSize: 12.5),
                   ),
                   const SizedBox(height: 10),

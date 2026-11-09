@@ -64,6 +64,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/app_icon.png
+    - assets/events_cache.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:

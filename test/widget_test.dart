@@ -29,13 +29,13 @@ void main() {
     expect(find.text('観光地・名所'), findsWidgets);
     expect(find.text('温泉・日帰り銭湯'), findsWidgets);
 
-    // 夫婦の好みAIナビが表示されていることを確認
-    expect(find.text('夫婦の好みAIナビ'), findsOneWidget);
+    // お出かけ好みAIナビが表示されていることを確認
+    expect(find.text('お出かけ好みAIナビ'), findsOneWidget);
 
     // 下部ナビゲーションの3つのタブが表示されていることを確認
     expect(find.text('AI提案・検索'), findsOneWidget);
     expect(find.text('ドライブ地図'), findsOneWidget);
-    expect(find.text('夫婦の行きたい！'), findsOneWidget);
+    expect(find.text('行きたい！リスト'), findsOneWidget);
   });
 
   test('直近の週末（11/9月曜日に調べたら11/14土〜11/15日）の自動算出テスト', () {

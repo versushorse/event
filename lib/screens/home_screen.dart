@@ -1,9 +1,11 @@
 // ホーム画面（東北6県タブ・期間指定イベント検索・Google Maps周辺立ち寄り検索・天気予報連携・夫婦リアルタイム同期・GPS連携）
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../config/api_keys.local.dart';
 import '../models/outing_spot.dart';
 import '../services/gemini_service.dart';
 import '../services/location_service.dart';
@@ -107,9 +109,8 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 夫婦共有ルームの合言葉
   String _coupleRoomCode = 'family-weekend';
 
-  /// このスマホの使用者（夫 or 妻。ハートを押した時点で自動識別）
-  PartnerPick _myRole = PartnerPick.husband;
-  bool _hasSelectedMyRole = false;
+  /// このスマホの使用者
+  PartnerPick _myRole = PartnerPick.me;
 
   /// 夫婦同期のステータス文字列
   String _syncStatusLabel = '確認中...';
@@ -342,7 +343,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _tripPlans = savedTrips;
         if (savedRole != null) {
           _myRole = savedRole;
-          _hasSelectedMyRole = true;
         }
       });
     }
@@ -868,94 +868,42 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// このスマホの使用者（夫 / 妻）を切り替えて保存する
+  /// この端末の使用者を設定して保存する
   Future<void> _setMyRole(PartnerPick role) async {
     setState(() {
       _myRole = role;
-      _hasSelectedMyRole = true;
     });
     await CoupleSyncService.saveMyRole(role);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
+    final roleName = role == PartnerPick.me
+        ? '自分用（❤️）'
+        : (role == PartnerPick.wife ? '妻（ママ）' : '夫（パパ）');
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '📱 このスマホを「${role.icon} ${role == PartnerPick.wife ? "妻（ママ）" : "夫（パパ）"}」に設定しました！ハートを押すと自動で識別されます',
+          '📱 この端末を「${role.icon} $roleName」に設定しました！',
         ),
         duration: const Duration(seconds: 2),
       ),
     );
   }
 
-  /// 初回ハート押下時に1回だけ「このスマホは夫 / 妻どちらですか？」を確認するダイアログ
-  Future<PartnerPick?> _promptMyRoleFirstTime() async {
-    return showDialog<PartnerPick>(
-      context: context,
-      builder: (dialogCtx) {
-        return AlertDialog(
-          title: const Row(
-            children: [
-              Text('📱 ', style: TextStyle(fontSize: 22)),
-              Expanded(child: Text('このスマホはどちらですか？')),
-            ],
-          ),
-          content: const Text(
-            '1回選ぶだけで、今後はハート❤️を押した時点で自動的に「夫が気になる」「妻が気になる」として識別されます！\n（※画面右上からいつでも変更できます）',
-            style: TextStyle(fontSize: 13.5, height: 1.45),
-          ),
-          actionsAlignment: MainAxisAlignment.spaceEvenly,
-          actions: [
-            FilledButton.tonalIcon(
-              onPressed: () => Navigator.of(dialogCtx).pop(PartnerPick.husband),
-              icon: const Text('🙋‍♂️', style: TextStyle(fontSize: 18)),
-              label: const Text('夫（パパ）',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-            FilledButton.icon(
-              onPressed: () => Navigator.of(dialogCtx).pop(PartnerPick.wife),
-              icon: const Text('🙋‍♀️', style: TextStyle(fontSize: 18)),
-              label: const Text('妻（ママ）',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  /// お気に入りON/OFF切り替え（ハートを押した時点で夫か妻かを自動識別！）
+  /// お気に入りON/OFF切り替え
   Future<void> _toggleFavorite(OutingSpot target) async {
-    if (!target.isFavorite && !_hasSelectedMyRole) {
-      final chosen = await _promptMyRoleFirstTime();
-      if (chosen != null) {
-        await _setMyRole(chosen);
-      } else {
-        _hasSelectedMyRole = true;
-        await CoupleSyncService.saveMyRole(_myRole);
-      }
-    }
-
-    bool upgradedToBoth = false;
     setState(() {
       _allSpots = _allSpots.map((spot) {
         if (spot.id != target.id) return spot;
         if (!spot.isFavorite) {
-          // ハートを押した時点でこのスマホの使用者（夫 or 妻）を自動セット！
           return spot.copyWith(
             isFavorite: true,
             pickedBy: _myRole,
           );
-        } else if (spot.pickedBy != null &&
-            spot.pickedBy != _myRole &&
-            spot.pickedBy != PartnerPick.both) {
-          // 相手がすでにハートを付けていたスポットに自分もハートを押したら「💑 2人とも行きたい！」に昇格！
-          upgradedToBoth = true;
-          return spot.copyWith(
-            isFavorite: true,
-            pickedBy: PartnerPick.both,
-          );
         } else {
-          return spot.copyWith(isFavorite: false);
+          return spot.copyWith(
+            isFavorite: false,
+            coupleNote: '',
+          );
         }
       }).toList();
       if (_selectedMapSpot?.id == target.id) {
@@ -978,15 +926,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final updated = _allSpots.firstWhere((s) => s.id == target.id);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
-    final pickBadge = updated.pickedBy ?? _myRole;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          upgradedToBoth
-              ? '💑 「${updated.title}」が『2人とも行きたい！』になりました！'
-              : updated.isFavorite
-                  ? '❤️ 「${updated.title}」を【${pickBadge.icon} ${pickBadge.label}】として追加しました！'
-                  : '「${updated.title}」を行きたい！リストから外しました',
+          updated.isFavorite
+              ? '❤️ 「${updated.title}」を行きたい！リストに追加しました'
+              : '「${updated.title}」を行きたい！リストから外しました',
         ),
         duration: const Duration(seconds: 2),
       ),
@@ -1544,31 +1489,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
-          // このスマホの使用者（夫 / 妻）ワンタップ切替バッジ
-          Padding(
-            padding: const EdgeInsets.only(right: 2),
-            child: ActionChip(
-              visualDensity: VisualDensity.compact,
-              tooltip: 'タップで「夫 / 妻」を切替（ハート押下時に自動識別）',
-              avatar: Text(
-                _myRole.icon,
-                style: const TextStyle(fontSize: 13),
-              ),
-              label: Text(
-                _myRole == PartnerPick.wife ? '妻' : '夫',
-                style: const TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              onPressed: () {
-                final nextRole = _myRole == PartnerPick.husband
-                    ? PartnerPick.wife
-                    : PartnerPick.husband;
-                _setMyRole(nextRole);
-              },
-            ),
-          ),
           IconButton(
             tooltip: '📅 イベント期間指定',
             onPressed: () => _showDateRangeSelectorSheet(context),
@@ -1673,7 +1593,7 @@ class _HomeScreenState extends State<HomeScreen> {
               label: Text('${_favoriteSpots.length}'),
               child: const Icon(Icons.favorite),
             ),
-            label: '夫婦の行きたい！',
+            label: '行きたい！リスト',
           ),
           NavigationDestination(
             icon: Badge(
@@ -1987,9 +1907,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                // 💑 夫婦の好みAIナビ（Gemini 3.5 Flash-Lite）カード
-                _buildCoupleAiInsightCard(context),
-                const SizedBox(height: 8),
+                // お出かけ好みAIナビ（Gemini 3.5 Flash-Lite）カード（Web版やAPIキーなし環境では非表示）
+                if (!kIsWeb && AppApiKeys.geminiApiKey.isNotEmpty) ...[
+                  _buildCoupleAiInsightCard(context),
+                  const SizedBox(height: 8),
+                ],
               ],
             ),
           ),
@@ -2102,7 +2024,7 @@ class _HomeScreenState extends State<HomeScreen> {
           // タイトル行 ＆ 再分析ボタン
           Row(
             children: [
-              const Text('💑 ', style: TextStyle(fontSize: 18)),
+              const Text('✨ ', style: TextStyle(fontSize: 18)),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2110,7 +2032,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Row(
                       children: [
                         const Text(
-                          '夫婦の好みAIナビ',
+                          'お出かけ好みAIナビ',
                           style: TextStyle(
                             fontSize: 13.5,
                             fontWeight: FontWeight.bold,
@@ -2138,7 +2060,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     Text(
                       favCount > 0
-                          ? '夫婦のお気に入り（$favCount件）から好みをAI分析'
+                          ? 'お気に入り（$favCount件）から好みをAI分析'
                           : '気になるスポットの❤️を押すと好みをAI分析',
                       style: TextStyle(
                         fontSize: 11,
@@ -2160,7 +2082,7 @@ class _HomeScreenState extends State<HomeScreen> {
               else
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 20),
-                  tooltip: '夫婦の好みを再分析',
+                  tooltip: '好みを再分析',
                   visualDensity: VisualDensity.compact,
                   color: Colors.pink.shade700,
                   onPressed: () => _fetchCoupleAiInsight(forceRefresh: true),
@@ -2247,7 +2169,7 @@ class _HomeScreenState extends State<HomeScreen> {
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 4),
               child: Text(
-                '夫婦のお気に入りから好みを分析しています...',
+                'お気に入りから好みを分析しています...',
                 style: TextStyle(fontSize: 12, color: Colors.black54),
               ),
             ),
@@ -2255,7 +2177,7 @@ class _HomeScreenState extends State<HomeScreen> {
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 2),
               child: Text(
-                'お気に入り（❤️）を増やすと、Gemini 3.5 Flash-Lite が夫婦の好みを学習して、ぴったりなお出かけスポットを提案します！',
+                'お気に入り（❤️）を増やすと、Gemini 3.5 Flash-Lite が好みを学習して、ぴったりなお出かけスポットを提案します！',
                 style: TextStyle(fontSize: 12, color: Colors.black54),
               ),
             ),
@@ -2439,7 +2361,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(width: 4),
                   IconButton.filledTonal(
-                    tooltip: '夫婦の行きたい！に追加',
+                    tooltip: '行きたい！リストに追加',
                     onPressed: () => _toggleFavorite(spot),
                     icon: Icon(
                       spot.isFavorite ? Icons.favorite : Icons.favorite_border,

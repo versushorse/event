@@ -40,21 +40,21 @@ class FavoritesScreen extends StatefulWidget {
 }
 
 class _FavoritesScreenState extends State<FavoritesScreen> {
-  PartnerPick? _selectedFilter;
   SpotCategory? _selectedCategoryFilter;
   bool _onlyVisitedFilter = false;
+  bool _onlyFavoritesFilter = false;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final visitedCount =
         widget.favoriteSpots.where((s) => s.isVisited).length;
+    final favoritesCount =
+        widget.favoriteSpots.where((s) => !s.isVisited).length;
 
     final filteredSpots = widget.favoriteSpots.where((s) {
       if (_onlyVisitedFilter && !s.isVisited) return false;
-      if (_selectedFilter != null && s.pickedBy != _selectedFilter) {
-        return false;
-      }
+      if (_onlyFavoritesFilter && s.isVisited) return false;
       if (_selectedCategoryFilter != null &&
           s.category != _selectedCategoryFilter) {
         return false;
@@ -90,14 +90,14 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             children: [
               Row(
                 children: [
-                  const Text('💑', style: TextStyle(fontSize: 26)),
+                  const Text('💖', style: TextStyle(fontSize: 26)),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          '夫婦の共有ボード ＆ 思い出スタンプ帳',
+                          '行きたい！リスト ＆ 思い出スタンプ帳',
                           style: TextStyle(
                             fontSize: 14.5,
                             fontWeight: FontWeight.bold,
@@ -168,76 +168,38 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              // このスマホが夫か妻かの設定バー（ハート押下時に自動識別）
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: colorScheme.surface.withValues(alpha: 0.85),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  children: [
-                    const Text(
-                      '📱 このスマホ:',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    ChoiceChip(
-                      visualDensity: VisualDensity.compact,
-                      label: const Text('🙋‍♂️ 夫（パパ）',
-                          style: TextStyle(fontSize: 12)),
-                      selected: widget.myRole == PartnerPick.husband,
-                      onSelected: (_) =>
-                          widget.onChangeMyRole?.call(PartnerPick.husband),
-                    ),
-                    const SizedBox(width: 6),
-                    ChoiceChip(
-                      visualDensity: VisualDensity.compact,
-                      label: const Text('🙋‍♀️ 妻（ママ）',
-                          style: TextStyle(fontSize: 12)),
-                      selected: widget.myRole == PartnerPick.wife,
-                      onSelected: (_) =>
-                          widget.onChangeMyRole?.call(PartnerPick.wife),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '※❤️を押すと自動で識別',
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ],
           ),
         ),
 
-        // 1段目：誰が気になるか ＆ 💮行ったよ！スタンプ帳の絞り込みチップ
+        // 1段目：お気に入り・💮行ったよ！スタンプ帳の絞り込みチップ
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: Row(
             children: [
               FilterChip(
                 visualDensity: VisualDensity.compact,
                 label: Text('すべて (${widget.favoriteSpots.length})'),
-                selected: _selectedFilter == null && !_onlyVisitedFilter,
+                selected: !_onlyFavoritesFilter && !_onlyVisitedFilter,
                 onSelected: (_) => setState(() {
-                  _selectedFilter = null;
+                  _onlyFavoritesFilter = false;
                   _onlyVisitedFilter = false;
                 }),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
+              FilterChip(
+                visualDensity: VisualDensity.compact,
+                avatar: const Text('❤️'),
+                label: Text('行きたい！ ($favoritesCount)'),
+                selected: _onlyFavoritesFilter,
+                selectedColor: Colors.pink.shade100,
+                onSelected: (val) => setState(() {
+                  _onlyFavoritesFilter = val;
+                  if (val) _onlyVisitedFilter = false;
+                }),
+              ),
+              const SizedBox(width: 8),
               FilterChip(
                 visualDensity: VisualDensity.compact,
                 avatar: const Text('💮'),
@@ -246,31 +208,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 selectedColor: Colors.orange.shade100,
                 onSelected: (val) => setState(() {
                   _onlyVisitedFilter = val;
-                  if (val) _selectedFilter = null;
+                  if (val) _onlyFavoritesFilter = false;
                 }),
               ),
-              const SizedBox(width: 6),
-              ...PartnerPick.values.map((pick) {
-                final count = widget.favoriteSpots
-                    .where((s) => s.pickedBy == pick)
-                    .length;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: FilterChip(
-                    visualDensity: VisualDensity.compact,
-                    avatar: Text(pick.icon),
-                    label: Text('${pick.label} ($count)'),
-                    selected: _selectedFilter == pick && !_onlyVisitedFilter,
-                    onSelected: (_) {
-                      setState(() {
-                        _onlyVisitedFilter = false;
-                        _selectedFilter =
-                            _selectedFilter == pick ? null : pick;
-                      });
-                    },
-                  ),
-                );
-              }),
             ],
           ),
         ),
@@ -367,10 +307,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     );
   }
 
-  /// 夫婦のお気に入りスポット1件分のカードUI
+  /// お気に入りスポット1件分のカードUI
   Widget _buildFavoriteCard(BuildContext context, OutingSpot spot) {
     final colorScheme = Theme.of(context).colorScheme;
-    final pick = spot.pickedBy ?? PartnerPick.both;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -413,51 +352,23 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                               ),
                             ),
                           ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: pick == PartnerPick.both
-                                ? Colors.pink.shade50
-                                : colorScheme.secondaryContainer,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: pick == PartnerPick.both
-                                  ? Colors.pink.shade200
-                                  : Colors.transparent,
+                        if (!spot.isVisited)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.pink.shade50,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: Colors.pink.shade200),
                             ),
-                          ),
-                          child: Text(
-                            '${pick.icon} ${pick.label}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: pick == PartnerPick.both
-                                  ? Colors.pink.shade800
-                                  : colorScheme.onSecondaryContainer,
-                            ),
-                          ),
-                        ),
-                        if (pick != PartnerPick.both &&
-                            pick != widget.myRole)
-                          ActionChip(
-                            visualDensity: VisualDensity.compact,
-                            avatar: const Text('💑'),
-                            label: const Text(
-                              '私も行きたい！',
+                            child: const Text(
+                              '❤️ 行きたい！',
                               style: TextStyle(
-                                fontSize: 11.5,
+                                fontSize: 12,
                                 fontWeight: FontWeight.bold,
+                                color: Color(0xFFC2185B),
                               ),
                             ),
-                            backgroundColor: Colors.pink.shade50,
-                            onPressed: () {
-                              widget.onUpdateFavorite(
-                                spot,
-                                PartnerPick.both,
-                                spot.coupleNote,
-                              );
-                            },
                           ),
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -639,7 +550,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                     Expanded(
                       child: Text(
                         spot.coupleNote.isEmpty
-                            ? '夫婦メモを追加（例：土曜の午前中に出発しよう！）'
+                            ? 'メモを追加（例：土曜の午前中に出発しよう！）'
                             : spot.coupleNote,
                         style: TextStyle(
                           fontSize: 13,
@@ -866,7 +777,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text(
-                    '夫婦の行きたい候補から選ばれた今週末の行き先は…',
+                    '行きたい候補から選ばれた今週末の行き先は…',
                     style: TextStyle(fontSize: 12.5),
                   ),
                   const SizedBox(height: 12),
@@ -933,7 +844,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
   }
 
   void _showEditFavoriteDialog(BuildContext context, OutingSpot spot) {
-    var selectedPick = spot.pickedBy ?? PartnerPick.both;
     final noteController = TextEditingController(text: spot.coupleNote);
 
     showDialog<void>(
@@ -942,33 +852,13 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: Text('「${spot.title}」の共有設定'),
+              title: Text('「${spot.title}」のメモ設定'),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '誰の行きたい候補ですか？',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: PartnerPick.values.map((pick) {
-                      return ChoiceChip(
-                        avatar: Text(pick.icon),
-                        label: Text(pick.label),
-                        selected: selectedPick == pick,
-                        onSelected: (_) {
-                          setDialogState(() => selectedPick = pick);
-                        },
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    '夫婦のひとことメモ',
+                    'ひとことメモ',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
@@ -991,7 +881,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   onPressed: () {
                     widget.onUpdateFavorite(
                       spot,
-                      selectedPick,
+                      spot.pickedBy ?? PartnerPick.me,
                       noteController.text.trim(),
                     );
                     Navigator.of(dialogContext).pop();
@@ -1012,20 +902,20 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('💑 夫婦の共有合言葉の設定'),
+          title: const Text('👥 共有合言葉の設定'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'ご夫婦の2台のAndroidスマホで同じ「合言葉」を設定すると、どちらかが追加した候補や旅のしおり・思い出スタンプが自動でリアルタイム同期されます。',
+                '家族やパートナーのスマホと同じ「合言葉」を設定すると、追加した候補や旅のしおり・思い出スタンプが自動でリアルタイム共有されます。（1人で使う場合はこのままでOK）',
                 style: TextStyle(fontSize: 13),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: controller,
                 decoration: const InputDecoration(
-                  labelText: '家族ルーム合言葉',
+                  labelText: '共有ルーム合言葉',
                   hintText: '例: family-weekend',
                   border: OutlineInputBorder(),
                 ),
