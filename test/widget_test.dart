@@ -8,6 +8,7 @@ import 'package:weekend_outing/services/gemini_service.dart';
 import 'package:weekend_outing/services/location_service.dart';
 import 'package:weekend_outing/services/sync_service.dart';
 import 'package:weekend_outing/widgets/safe_chips.dart';
+import 'package:weekend_outing/widgets/visited_memory_widgets.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -343,5 +344,89 @@ void main() {
     await tester.tap(find.text('期間限定イベント'));
     await tester.pumpAndSettle();
     expect(selected, isTrue);
+  });
+
+  test('思い出写真（visitedPhotos）のJSON保存・同期マージ・共有テキストテスト', () {
+    const samplePhoto =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    final baseSpot = GeminiOutingService.getInitialSpots().first;
+    final spotWithPhoto = baseSpot.copyWith(
+      isFavorite: true,
+      isVisited: true,
+      visitedDate: '2026/11/10',
+      visitedMemory: '素敵な景色でした',
+      visitedPhotos: const [samplePhoto],
+    );
+
+    final restoredFromJson = OutingSpot.fromJson(spotWithPhoto.toJson());
+    expect(restoredFromJson.visitedPhotos, [samplePhoto]);
+
+    final restoredFromSync = OutingSpot.fromJson(spotWithPhoto.toSyncJson());
+    expect(restoredFromSync.visitedPhotos, [samplePhoto]);
+
+    // クラウド側が写真未対応フォーマット等で空写真配列を送ってきた場合でもローカル写真を保護
+    final merged = CoupleSyncService.mergeSpotsForTesting(
+      localSpots: [spotWithPhoto],
+      localUpdated: {spotWithPhoto.id: 1000},
+      cloudSpots: [
+        baseSpot.copyWith(isFavorite: true, isVisited: true, visitedPhotos: const []),
+      ],
+      cloudTimestamp: 2000,
+      cloudUpdated: {spotWithPhoto.id: 2000},
+    );
+    expect(merged.first.visitedPhotos, [samplePhoto]);
+
+    final shareText = CoupleSyncService.exportFavoritesShareText([spotWithPhoto], 'test-room');
+    expect(shareText.contains('思い出写真: 1枚'), isTrue);
+  });
+
+  testWidgets('VisitedMemoryBoxと写真添付スタンプ編集ダイアログの表示・保存テスト',
+      (WidgetTester tester) async {
+    const samplePhoto =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    final spot = GeminiOutingService.getInitialSpots().first.copyWith(
+      isFavorite: true,
+      isVisited: true,
+      visitedDate: '2026/11/10',
+      visitedMemory: '楽しかった！',
+      visitedPhotos: const [samplePhoto],
+    );
+    OutingSpot? savedSpot;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) {
+              return VisitedMemoryBox(
+                spot: spot,
+                onEditTap: () {
+                  showVisitedStampEditorDialog(
+                    context: context,
+                    spot: spot,
+                    onSave: (updated) => savedSpot = updated,
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('楽しかった！'), findsOneWidget);
+    expect(find.byType(Image), findsOneWidget);
+
+    await tester.tap(find.text('編集'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('思い出写真'), findsOneWidget);
+    expect(find.text('アルバムから追加'), findsOneWidget);
+
+    await tester.tap(find.text('保存する'));
+    await tester.pumpAndSettle();
+
+    expect(savedSpot, isNotNull);
+    expect(savedSpot!.visitedPhotos, [samplePhoto]);
   });
 }

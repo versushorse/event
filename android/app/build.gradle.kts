@@ -47,7 +47,7 @@ android {
                 artifactType = "APK"
                 artifactPath = project.file("../../build/app/outputs/flutter-apk/app-release.apk").absolutePath
                 testers = "high.standard.derringer@gmail.com, orangeruby73.04sw1184@gmail.com"
-                releaseNotes = "Firebase公式リアルタイムデータベース同期・4KB制限解除・自動復元対応版"
+                releaseNotes = "【新機能】行ったよ！写真添付・思い出アルバム対応／夫婦お気に入りの上書き防止マージ同期対応（Android専用化）"
             }
         }
     }

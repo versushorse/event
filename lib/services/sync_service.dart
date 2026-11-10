@@ -66,21 +66,12 @@ class CoupleSyncService {
     await prefs.setString(_prefMyRoleKey, role.name);
   }
 
-  /// ローカルに保存された共有合言葉を取得する
-  /// - Android版（!kIsWeb）: 従来通りデフォルト 'family-weekend'（夫婦共有用）
-  /// - Web版（kIsWeb）: 他ユーザーと混ざらないよう端末ごとのランダム合言葉を自動生成
+  /// ローカルに保存された共有合言葉を取得する（未設定ならデフォルト 'family-weekend'）
   static Future<String> getRoomCode() async {
     final prefs = await SharedPreferences.getInstance();
     var code = prefs.getString(_prefRoomKey);
     if (code == null || code.trim().isEmpty) {
-      if (kIsWeb) {
-        final timestamp = DateTime.now().millisecondsSinceEpoch;
-        final hash = (timestamp % 1679616).toRadixString(36).padLeft(4, '0');
-        code = 'spot-$hash';
-        await prefs.setString(_prefRoomKey, code);
-      } else {
-        code = 'family-weekend';
-      }
+      code = 'family-weekend';
     }
     return code;
   }
@@ -555,7 +546,8 @@ class CoupleSyncService {
         // mergedされた状態（例えばbothへ自動昇格した等）がクラウドと違っていれば修復プッシュ
         if (mergedSpot.pickedBy != c.pickedBy ||
             mergedSpot.isVisited != c.isVisited ||
-            mergedSpot.coupleNote != c.coupleNote) {
+            mergedSpot.coupleNote != c.coupleNote ||
+            mergedSpot.visitedPhotos.length != c.visitedPhotos.length) {
           cloudNeedsRepair = true;
         }
       } else if (l != null && c == null) {
@@ -633,6 +625,17 @@ class CoupleSyncService {
       mergedVisitedMemory = other.visitedMemory;
     }
 
+    // 思い出写真：より新しい編集側(base)を優先し、旧バージョン由来の欠落等のみ補完保持する
+    final List<String> mergedPhotos;
+    if (base.visitedPhotos.isNotEmpty) {
+      mergedPhotos = base.visitedPhotos;
+    } else if (other.visitedPhotos.isNotEmpty &&
+        (preferCloud || !base.isVisited)) {
+      mergedPhotos = other.visitedPhotos;
+    } else {
+      mergedPhotos = base.visitedPhotos;
+    }
+
     return base.copyWith(
       isFavorite: true,
       pickedBy: mergedPick,
@@ -641,6 +644,7 @@ class CoupleSyncService {
       visitedDate: mergedVisitedDate,
       visitedRating: mergedVisitedRating,
       visitedMemory: mergedVisitedMemory,
+      visitedPhotos: mergedPhotos,
     );
   }
 
@@ -941,20 +945,16 @@ class CoupleSyncService {
     }
 
     final buffer = StringBuffer();
-    buffer.writeln(kIsWeb
-        ? '💖 週末どこ行く？行きたいスポット一覧'
-        : '💑 週末どこ行く？夫婦の行きたいスポット一覧');
-    buffer.writeln('🔑 合言葉: $roomCode\n');
+    buffer.writeln('💑 週末どこ行く？夫婦の行きたいスポット一覧');
+    buffer.writeln('🔑 家族合言葉: $roomCode\n');
 
     for (var i = 0; i < favorites.length; i++) {
       final spot = favorites[i];
-      final pickLabel = spot.pickedBy?.label ?? (kIsWeb ? '自分のお気に入り' : '2人とも');
+      final pickLabel = spot.pickedBy?.label ?? '2人とも';
       final visitedBadge = spot.isVisited ? ' 💮[行ったよ！]' : '';
       buffer.writeln('${i + 1}. ${spot.title}$visitedBadge');
       buffer.writeln('   📍 ${spot.address}');
-      if (!kIsWeb) {
-        buffer.writeln('   🙋 担当: $pickLabel');
-      }
+      buffer.writeln('   🙋 担当: $pickLabel');
       if (spot.coupleNote.isNotEmpty) {
         buffer.writeln('   💬 メモ: ${spot.coupleNote}');
       }
@@ -962,14 +962,15 @@ class CoupleSyncService {
         buffer.writeln(
             '   💮 思い出(${spot.visitedDate} ★${spot.visitedRating}): ${spot.visitedMemory}');
       }
+      if (spot.isVisited && spot.visitedPhotos.isNotEmpty) {
+        buffer.writeln('   📸 思い出写真: ${spot.visitedPhotos.length}枚');
+      }
       buffer.writeln(
           '   🗺️ 地図: https://maps.google.com/?q=${spot.latitude},${spot.longitude}');
       buffer.writeln();
     }
 
-    buffer.writeln(kIsWeb
-        ? 'アプリの「行きたい！リスト」画面で合言葉「$roomCode」を入力すると共有できます！'
-        : 'アプリの「夫婦の行きたい！」画面で合言葉「$roomCode」を入力すると同期できます！');
+    buffer.writeln('アプリの「夫婦の行きたい！」画面で合言葉「$roomCode」を入力すると同期できます！');
     return buffer.toString();
   }
 

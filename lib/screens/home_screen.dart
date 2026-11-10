@@ -1,5 +1,4 @@
-// ホーム画面（東北6県タブ・期間指定イベント検索・Google Maps周辺立ち寄り検索・天気予報連携・夫婦リアルタイム同期・GPS連携）
-import 'package:flutter/foundation.dart';
+// ホーム画面（Android版：東北6県タブ・期間指定イベント検索・Google Maps周辺立ち寄り検索・天気予報連携・夫婦リアルタイム同期・GPS連携）
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -12,6 +11,7 @@ import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/weather_service.dart';
 import '../widgets/safe_chips.dart';
+import '../widgets/visited_memory_widgets.dart';
 import 'dart:math';
 import 'favorites_screen.dart';
 import 'trip_planner_screen.dart';
@@ -110,9 +110,9 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 夫婦共有ルームの合言葉
   String _coupleRoomCode = 'family-weekend';
 
-  /// このスマホの使用者（Web版はme、Android版は夫 or 妻）
-  PartnerPick _myRole = kIsWeb ? PartnerPick.me : PartnerPick.husband;
-  bool _hasSelectedMyRole = kIsWeb;
+  /// このスマホの使用者（夫 or 妻。ハートを押した時点で自動識別）
+  PartnerPick _myRole = PartnerPick.husband;
+  bool _hasSelectedMyRole = false;
 
   /// 夫婦同期のステータス文字列
   String _syncStatusLabel = '確認中...';
@@ -343,10 +343,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       setState(() {
         _tripPlans = savedTrips;
-        if (kIsWeb) {
-          _myRole = PartnerPick.me;
-          _hasSelectedMyRole = true;
-        } else if (savedRole != null && savedRole != PartnerPick.me) {
+        if (savedRole != null && savedRole != PartnerPick.me) {
           _myRole = savedRole;
           _hasSelectedMyRole = true;
         }
@@ -397,6 +394,7 @@ class _HomeScreenState extends State<HomeScreen> {
           visitedDate: synced.visitedDate,
           visitedRating: synced.visitedRating,
           visitedMemory: synced.visitedMemory,
+          visitedPhotos: synced.visitedPhotos,
         );
       } else if (replaceMissingWithFalse) {
         return spot.copyWith(isFavorite: false);
@@ -884,15 +882,11 @@ class _HomeScreenState extends State<HomeScreen> {
     await CoupleSyncService.saveMyRole(role);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
-    final roleName = role == PartnerPick.me
-        ? '自分用（❤️）'
-        : (role == PartnerPick.wife ? '妻（ママ）' : '夫（パパ）');
+    final roleName = role == PartnerPick.wife ? '妻（ママ）' : '夫（パパ）';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          kIsWeb
-              ? '📱 この端末を「${role.icon} $roleName」に設定しました！'
-              : '📱 このスマホを「${role.icon} $roleName」に設定しました！ハートを押すと自動で識別されます',
+          '📱 このスマホを「${role.icon} $roleName」に設定しました！ハートを押すと自動で識別されます',
         ),
         duration: const Duration(seconds: 2),
       ),
@@ -949,9 +943,9 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  /// お気に入りON/OFF切り替え
+  /// お気に入りON/OFF切り替え（ハートを押した時点で夫か妻かを自動識別！）
   Future<void> _toggleFavorite(OutingSpot target) async {
-    if (!kIsWeb && !target.isFavorite && !_hasSelectedMyRole) {
+    if (!target.isFavorite && !_hasSelectedMyRole) {
       final chosen = await _promptMyRoleFirstTime();
       if (chosen != null) {
         await _setMyRole(chosen);
@@ -972,10 +966,9 @@ class _HomeScreenState extends State<HomeScreen> {
         if (!spot.isFavorite) {
           return spot.copyWith(
             isFavorite: true,
-            pickedBy: kIsWeb ? PartnerPick.me : _myRole,
+            pickedBy: _myRole,
           );
-        } else if (!kIsWeb &&
-            spot.pickedBy != null &&
+        } else if (spot.pickedBy != null &&
             spot.pickedBy != _myRole &&
             spot.pickedBy != PartnerPick.both &&
             spot.pickedBy != PartnerPick.me) {
@@ -985,7 +978,7 @@ class _HomeScreenState extends State<HomeScreen> {
             isFavorite: true,
             pickedBy: PartnerPick.both,
           );
-        } else if (!kIsWeb && spot.pickedBy == PartnerPick.both) {
+        } else if (spot.pickedBy == PartnerPick.both) {
           // 「2人とも」状態から自分のハートを外す場合は、相手の候補まで消さないよう相手分だけ残す
           downgradedToPartner = true;
           remainingPartnerPick = _myRole == PartnerPick.husband
@@ -1033,9 +1026,7 @@ class _HomeScreenState extends State<HomeScreen> {
       msg =
           '自分の行きたいを解除しました（${remainingPartnerPick!.icon} ${remainingPartnerPick!.label} として残ります）';
     } else if (updated.isFavorite) {
-      msg = kIsWeb
-          ? '❤️ 「${updated.title}」を行きたい！リストに追加しました'
-          : '❤️ 「${updated.title}」を【${pickBadge.icon} ${pickBadge.label}】として追加しました！';
+      msg = '❤️ 「${updated.title}」を【${pickBadge.icon} ${pickBadge.label}】として追加しました！';
     } else {
       msg = '「${updated.title}」を行きたい！リストから外しました';
     }
@@ -1103,8 +1094,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (spot.id != updated.id) return spot;
         return updated.copyWith(
           isFavorite: true,
-          pickedBy: updated.pickedBy ??
-              (kIsWeb ? PartnerPick.me : PartnerPick.both),
+          pickedBy: updated.pickedBy ?? PartnerPick.both,
         );
       }).toList();
     });
@@ -1418,97 +1408,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// 💮 ホーム・詳細シートからワンタップで「行ったよ！」スタンプを押すダイアログ（案C）
+  /// 💮 ホーム・詳細シートからワンタップで「行ったよ！」スタンプを押すダイアログ（共通ダイアログ呼出）
   void _showQuickVisitedDialog(BuildContext context, OutingSpot spot) {
-    final now = DateTime.now();
-    final defaultDate = spot.visitedDate.isNotEmpty
-        ? spot.visitedDate
-        : '${now.year}/${now.month}/${now.day}';
-    final dateCtrl = TextEditingController(text: defaultDate);
-    final memoryCtrl = TextEditingController(text: spot.visitedMemory);
-    int rating = spot.visitedRating.clamp(1, 5);
-    bool isVisited = true;
-
-    showDialog<void>(
+    showVisitedStampEditorDialog(
       context: context,
-      builder: (dialogCtx) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: Text('💮「${spot.title}」行ったよ記録'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('💮 行ったよ！スタンプを押す',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      value: isVisited,
-                      onChanged: (v) => setDialogState(() => isVisited = v),
-                    ),
-                    TextField(
-                      controller: dateCtrl,
-                      decoration: const InputDecoration(
-                        labelText: '行った日',
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text('家族の満足度:',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(5, (idx) {
-                        final starVal = idx + 1;
-                        return IconButton(
-                          onPressed: () =>
-                              setDialogState(() => rating = starVal),
-                          icon: Icon(
-                            starVal <= rating ? Icons.star : Icons.star_border,
-                            color: Colors.amber.shade700,
-                            size: 30,
-                          ),
-                        );
-                      }),
-                    ),
-                    TextField(
-                      controller: memoryCtrl,
-                      maxLines: 2,
-                      decoration: const InputDecoration(
-                        labelText: '思い出ひとことメモ（任意）',
-                        hintText: '例: 子どもがすごく楽しそうだった！また来年も行きたい',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogCtx).pop(),
-                  child: const Text('キャンセル'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    final updated = spot.copyWith(
-                      isVisited: isVisited,
-                      visitedDate: isVisited ? dateCtrl.text.trim() : '',
-                      visitedRating: rating,
-                      visitedMemory: isVisited ? memoryCtrl.text.trim() : '',
-                    );
-                    _updateVisitedSpot(updated);
-                    Navigator.of(dialogCtx).pop();
-                  },
-                  child: const Text('保存する'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      spot: spot,
+      onSave: _updateVisitedSpot,
     );
   }
 
@@ -1614,34 +1519,33 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
-          if (!kIsWeb)
-            // このスマホの使用者（夫 / 妻）ワンタップ切替バッジ（Android版のみ）
-            Padding(
-              padding: const EdgeInsets.only(right: 2),
-              child: Tooltip(
-                message: 'タップで「夫 / 妻」を切替（ハート押下時に自動識別）',
-                child: SafeActionChip(
-                  visualDensity: VisualDensity.compact,
-                  avatar: Text(
-                    _myRole.icon,
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  label: Text(
-                    _myRole == PartnerPick.wife ? '妻' : '夫',
-                    style: const TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  onPressed: () {
-                    final nextRole = _myRole == PartnerPick.husband
-                        ? PartnerPick.wife
-                        : PartnerPick.husband;
-                    _setMyRole(nextRole);
-                  },
+          // このスマホの使用者（夫 / 妻）ワンタップ切替バッジ
+          Padding(
+            padding: const EdgeInsets.only(right: 2),
+            child: Tooltip(
+              message: 'タップで「夫 / 妻」を切替（ハート押下時に自動識別）',
+              child: SafeActionChip(
+                visualDensity: VisualDensity.compact,
+                avatar: Text(
+                  _myRole.icon,
+                  style: const TextStyle(fontSize: 13),
                 ),
+                label: Text(
+                  _myRole == PartnerPick.wife ? '妻' : '夫',
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                onPressed: () {
+                  final nextRole = _myRole == PartnerPick.husband
+                      ? PartnerPick.wife
+                      : PartnerPick.husband;
+                  _setMyRole(nextRole);
+                },
               ),
             ),
+          ),
           IconButton(
             tooltip: '📅 イベント期間指定',
             onPressed: () => _showDateRangeSelectorSheet(context),
@@ -1746,7 +1650,7 @@ class _HomeScreenState extends State<HomeScreen> {
               label: Text('${_favoriteSpots.length}'),
               child: const Icon(Icons.favorite),
             ),
-            label: kIsWeb ? '行きたい！リスト' : '夫婦の行きたい！',
+            label: '夫婦の行きたい！',
           ),
           NavigationDestination(
             icon: Badge(
@@ -2062,8 +1966,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                // お出かけ好みAIナビ（Gemini 3.5 Flash-Lite）カード（Web版やAPIキーなし環境では非表示）
-                if (!kIsWeb && AppApiKeys.geminiApiKey.isNotEmpty) ...[
+                // 夫婦の好みAIナビ（Gemini 3.5 Flash-Lite）カード
+                if (AppApiKeys.geminiApiKey.isNotEmpty) ...[
                   _buildCoupleAiInsightCard(context),
                   const SizedBox(height: 8),
                 ],
@@ -2763,6 +2667,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
+
+              if (spot.isVisited &&
+                  (spot.visitedPhotos.isNotEmpty ||
+                      spot.visitedMemory.isNotEmpty))
+                VisitedMemoryBox(
+                  spot: spot,
+                  onEditTap: () => _showQuickVisitedDialog(context, spot),
+                ),
 
               // 立ち寄り先（近隣の温泉・神社等）を地図で探すショートカットボタン
               Padding(
@@ -3654,6 +3566,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
+
+                  if (spot.isVisited) ...[
+                    VisitedMemoryBox(
+                      spot: spot,
+                      onEditTap: () {
+                        Navigator.of(sheetContext).pop();
+                        _showQuickVisitedDialog(this.context, spot);
+                      },
+                    ),
+                    const SizedBox(height: 4),
+                  ],
 
                   // このスポット周辺の立ち寄り先をワンタップで地図検索できるボックス
                   Container(
