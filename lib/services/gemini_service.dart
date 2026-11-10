@@ -2872,6 +2872,15 @@ $candidateListText
   /// タイトルと説明文からカテゴリを推定
   static SpotCategory _guessSpotCategory(String title, String desc) {
     final t = '$title $desc';
+    if (t.contains('温泉') ||
+        t.contains('銭湯') ||
+        t.contains('サウナ') ||
+        t.contains('露天風呂') ||
+        t.contains('湯') ||
+        t.contains('スパ') ||
+        t.contains('竜泉寺')) {
+      return SpotCategory.onsen;
+    }
     if (t.contains('神社') ||
         t.contains('寺') ||
         t.contains('八幡宮') ||
@@ -2881,15 +2890,6 @@ $candidateListText
         t.contains('観音') ||
         t.contains('不動')) {
       return SpotCategory.sightseeing;
-    }
-    if (t.contains('温泉') ||
-        t.contains('銭湯') ||
-        t.contains('サウナ') ||
-        t.contains('露天風呂') ||
-        t.contains('湯') ||
-        t.contains('スパ') ||
-        t.contains('竜泉寺')) {
-      return SpotCategory.onsen;
     }
     if (t.contains('科学館') ||
         t.contains('博物館') ||

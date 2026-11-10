@@ -1,4 +1,5 @@
 // アプリ全体の基本動作・東北地域タブ・直近週末計算を確認するテスト
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:weekend_outing/main.dart';
@@ -6,6 +7,7 @@ import 'package:weekend_outing/models/outing_spot.dart';
 import 'package:weekend_outing/services/gemini_service.dart';
 import 'package:weekend_outing/services/location_service.dart';
 import 'package:weekend_outing/services/sync_service.dart';
+import 'package:weekend_outing/widgets/safe_chips.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -29,13 +31,13 @@ void main() {
     expect(find.text('観光地・名所'), findsWidgets);
     expect(find.text('温泉・日帰り銭湯'), findsWidgets);
 
-    // お出かけ好みAIナビが表示されていることを確認
-    expect(find.text('お出かけ好みAIナビ'), findsOneWidget);
+    // 夫婦の好みAIナビが表示されていることを確認（非Web＝Android版）
+    expect(find.text('夫婦の好みAIナビ'), findsOneWidget);
 
-    // 下部ナビゲーションの3つのタブが表示されていることを確認
+    // 下部ナビゲーションのタブが表示されていることを確認
     expect(find.text('AI提案・検索'), findsOneWidget);
     expect(find.text('ドライブ地図'), findsOneWidget);
-    expect(find.text('行きたい！リスト'), findsOneWidget);
+    expect(find.text('夫婦の行きたい！'), findsOneWidget);
   });
 
   test('直近の週末（11/9月曜日に調べたら11/14土〜11/15日）の自動算出テスト', () {
@@ -262,5 +264,84 @@ void main() {
 
     final spot = OutingSpot.fromJson(oldGourmetJson);
     expect(spot.category, SpotCategory.dining);
+  });
+
+  test('夫婦お気に入りの安全マージ同期（片方の上書きで相手が消えない＆2人とも昇格）テスト', () {
+    final samples = GeminiOutingService.getInitialSpots();
+    final spotA = samples[0].copyWith(isFavorite: true, pickedBy: PartnerPick.husband);
+    final spotB = samples[1].copyWith(isFavorite: true, pickedBy: PartnerPick.wife);
+    final spotCHusband = samples[2].copyWith(isFavorite: true, pickedBy: PartnerPick.husband);
+    final spotCWife = samples[2].copyWith(isFavorite: true, pickedBy: PartnerPick.wife);
+
+    // 1. 夫(ローカル)がAとCを持ち、妻(クラウド)がBとCだけを上書きした状態でもAが消えず、Cはbothになる
+    final merged = CoupleSyncService.mergeSpotsForTesting(
+      localSpots: [spotA, spotCHusband],
+      localUpdated: {spotA.id: 1000, spotCHusband.id: 1000},
+      cloudSpots: [spotB, spotCWife],
+      cloudTimestamp: 2000,
+      cloudUpdated: {spotB.id: 2000, spotCWife.id: 2000},
+    );
+
+    expect(merged.length, 3);
+    expect(merged.any((s) => s.id == spotA.id), isTrue);
+    expect(merged.any((s) => s.id == spotB.id), isTrue);
+    final mergedC = merged.firstWhere((s) => s.id == spotCHusband.id);
+    expect(mergedC.pickedBy, PartnerPick.both);
+
+    // 2. 相手が明示的にspotAを削除（削除ログ時刻 > ローカル更新時刻）したときは削除される
+    final mergedAfterDelete = CoupleSyncService.mergeSpotsForTesting(
+      localSpots: [spotA],
+      localUpdated: {spotA.id: 1000},
+      cloudSpots: [spotB],
+      cloudTimestamp: 3000,
+      cloudUpdated: {spotB.id: 2000},
+      cloudDeleted: {spotA.id: 3000},
+    );
+    expect(mergedAfterDelete.any((s) => s.id == spotA.id), isFalse);
+    expect(mergedAfterDelete.any((s) => s.id == spotB.id), isTrue);
+  });
+
+  test('PartnerPickのindex後方互換（husband=0, wife=1, both=2）確認テスト', () {
+    expect(PartnerPick.husband.index, 0);
+    expect(PartnerPick.wife.index, 1);
+    expect(PartnerPick.both.index, 2);
+  });
+
+  testWidgets('SafeChip群が文字切れせず完全ラベル表示＆タップ応答できるテスト',
+      (WidgetTester tester) async {
+    bool selected = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    SafeChoiceChip(
+                      avatar: const Text('🎪'),
+                      label: const Text('期間限定イベント'),
+                      selected: selected,
+                      onSelected: (v) => setState(() => selected = v),
+                    ),
+                    SafeActionChip(
+                      label: const Text('🍽️ 周辺の食事処・ランチ'),
+                      onPressed: () {},
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('期間限定イベント'), findsOneWidget);
+    expect(find.text('🍽️ 周辺の食事処・ランチ'), findsOneWidget);
+    await tester.tap(find.text('期間限定イベント'));
+    await tester.pumpAndSettle();
+    expect(selected, isTrue);
   });
 }

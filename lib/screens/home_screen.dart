@@ -11,6 +11,7 @@ import '../services/gemini_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/weather_service.dart';
+import '../widgets/safe_chips.dart';
 import 'dart:math';
 import 'favorites_screen.dart';
 import 'trip_planner_screen.dart';
@@ -109,8 +110,9 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 夫婦共有ルームの合言葉
   String _coupleRoomCode = 'family-weekend';
 
-  /// このスマホの使用者
-  PartnerPick _myRole = PartnerPick.me;
+  /// このスマホの使用者（Web版はme、Android版は夫 or 妻）
+  PartnerPick _myRole = kIsWeb ? PartnerPick.me : PartnerPick.husband;
+  bool _hasSelectedMyRole = kIsWeb;
 
   /// 夫婦同期のステータス文字列
   String _syncStatusLabel = '確認中...';
@@ -341,8 +343,12 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       setState(() {
         _tripPlans = savedTrips;
-        if (savedRole != null) {
+        if (kIsWeb) {
+          _myRole = PartnerPick.me;
+          _hasSelectedMyRole = true;
+        } else if (savedRole != null && savedRole != PartnerPick.me) {
           _myRole = savedRole;
+          _hasSelectedMyRole = true;
         }
       });
     }
@@ -367,34 +373,56 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _coupleRoomCode = code;
       if (savedFavs.isNotEmpty) {
-        final favIds = savedFavs.map((s) => s.id).toSet();
-        _allSpots = _allSpots.map((spot) {
-          if (favIds.contains(spot.id)) {
-            final saved = savedFavs.firstWhere((s) => s.id == spot.id);
-            return spot.copyWith(
-              isFavorite: true,
-              pickedBy: saved.pickedBy,
-              coupleNote: saved.coupleNote,
-              isVisited: saved.isVisited,
-              visitedDate: saved.visitedDate,
-              visitedRating: saved.visitedRating,
-              visitedMemory: saved.visitedMemory,
-            );
-          }
-          return spot;
-        }).toList();
-        for (final saved in savedFavs) {
-          if (!_allSpots.any((s) => s.id == saved.id)) {
-            _allSpots.add(saved.copyWith(isFavorite: true));
-          }
-        }
+        _applySyncedFavoritesToSpots(savedFavs, replaceMissingWithFalse: false);
       }
     });
 
     _triggerCloudSync();
   }
 
-  /// クラウド同期を実行する（相手の最新変更を受信・マージ）
+  /// 同期済みお気に入りリストを _allSpots へ反映する共通ヘルパー
+  void _applySyncedFavoritesToSpots(
+    List<OutingSpot> syncedFavs, {
+    bool replaceMissingWithFalse = true,
+  }) {
+    final favMap = <String, OutingSpot>{for (final s in syncedFavs) s.id: s};
+    _allSpots = _allSpots.map((spot) {
+      final synced = favMap[spot.id];
+      if (synced != null) {
+        return spot.copyWith(
+          isFavorite: true,
+          pickedBy: synced.pickedBy,
+          coupleNote: synced.coupleNote,
+          isVisited: synced.isVisited,
+          visitedDate: synced.visitedDate,
+          visitedRating: synced.visitedRating,
+          visitedMemory: synced.visitedMemory,
+        );
+      } else if (replaceMissingWithFalse) {
+        return spot.copyWith(isFavorite: false);
+      }
+      return spot;
+    }).toList();
+    for (final synced in syncedFavs) {
+      if (!_allSpots.any((s) => s.id == synced.id)) {
+        _allSpots.add(synced.copyWith(isFavorite: true));
+      }
+    }
+    if (_selectedMapSpot != null) {
+      _selectedMapSpot = _allSpots.firstWhere(
+        (s) => s.id == _selectedMapSpot!.id,
+        orElse: () => _selectedMapSpot!,
+      );
+    }
+    if (_anchorSpot != null) {
+      _anchorSpot = _allSpots.firstWhere(
+        (s) => s.id == _anchorSpot!.id,
+        orElse: () => _anchorSpot!,
+      );
+    }
+  }
+
+  /// クラウド同期を実行する（相手の最新変更を受信・安全マージ）
   Future<void> _triggerCloudSync() async {
     setState(() => _syncStatusLabel = '同期中...');
     final localFavs = _favoriteSpots;
@@ -405,29 +433,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!mounted) return;
     if (pulled != null) {
-      final pulledIds = pulled.map((s) => s.id).toSet();
       setState(() {
-        _allSpots = _allSpots.map((spot) {
-          if (pulledIds.contains(spot.id)) {
-            final cloudSpot = pulled.firstWhere((s) => s.id == spot.id);
-            return spot.copyWith(
-              isFavorite: true,
-              pickedBy: cloudSpot.pickedBy,
-              coupleNote: cloudSpot.coupleNote,
-              isVisited: cloudSpot.isVisited,
-              visitedDate: cloudSpot.visitedDate,
-              visitedRating: cloudSpot.visitedRating,
-              visitedMemory: cloudSpot.visitedMemory,
-            );
-          } else {
-            return spot.copyWith(isFavorite: false);
-          }
-        }).toList();
-        for (final cloudSpot in pulled) {
-          if (!_allSpots.any((s) => s.id == cloudSpot.id)) {
-            _allSpots.add(cloudSpot.copyWith(isFavorite: true));
-          }
-        }
+        _applySyncedFavoritesToSpots(pulled, replaceMissingWithFalse: true);
       });
     }
 
@@ -872,6 +879,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _setMyRole(PartnerPick role) async {
     setState(() {
       _myRole = role;
+      _hasSelectedMyRole = true;
     });
     await CoupleSyncService.saveMyRole(role);
     if (!mounted) return;
@@ -882,24 +890,113 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '📱 この端末を「${role.icon} $roleName」に設定しました！',
+          kIsWeb
+              ? '📱 この端末を「${role.icon} $roleName」に設定しました！'
+              : '📱 このスマホを「${role.icon} $roleName」に設定しました！ハートを押すと自動で識別されます',
         ),
         duration: const Duration(seconds: 2),
       ),
     );
   }
 
+  /// Android版：初回ハート押下時に1回だけ「このスマホは夫 / 妻どちらですか？」を確認するダイアログ
+  Future<PartnerPick?> _promptMyRoleFirstTime() async {
+    return showDialog<PartnerPick>(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Text('📱 ', style: TextStyle(fontSize: 22)),
+              Expanded(child: Text('このスマホはどちらですか？')),
+            ],
+          ),
+          content: const Text(
+            '1回選ぶだけで、今後はハート❤️を押した時点で自動的に「夫が気になる」「妻が気になる」として識別されます！\n（※画面右上からいつでも変更できます）',
+            style: TextStyle(fontSize: 13.5, height: 1.45),
+          ),
+          actionsAlignment: MainAxisAlignment.spaceEvenly,
+          actions: [
+            FilledButton.tonalIcon(
+              onPressed: () => Navigator.of(dialogCtx).pop(PartnerPick.husband),
+              icon: const Text('🙋‍♂️', style: TextStyle(fontSize: 18)),
+              label: const Text('夫（パパ）',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(dialogCtx).pop(PartnerPick.wife),
+              icon: const Text('🙋‍♀️', style: TextStyle(fontSize: 18)),
+              label: const Text('妻（ママ）',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// お気に入りをクラウドとマージ・同期し、最新状態をUIへ反映する共通ヘルパー
+  Future<void> _pushAndSyncFavorites() async {
+    final synced = await CoupleSyncService.pushToCloud(
+      roomCode: _coupleRoomCode,
+      favorites: _favoriteSpots,
+    );
+    final lastSync = await CoupleSyncService.getLastSyncLabel();
+    if (!mounted) return;
+    setState(() {
+      _applySyncedFavoritesToSpots(synced, replaceMissingWithFalse: true);
+      _syncStatusLabel = lastSync;
+    });
+  }
+
   /// お気に入りON/OFF切り替え
   Future<void> _toggleFavorite(OutingSpot target) async {
+    if (!kIsWeb && !target.isFavorite && !_hasSelectedMyRole) {
+      final chosen = await _promptMyRoleFirstTime();
+      if (chosen != null) {
+        await _setMyRole(chosen);
+      } else {
+        _hasSelectedMyRole = true;
+        await CoupleSyncService.saveMyRole(_myRole);
+      }
+    }
+
+    bool upgradedToBoth = false;
+    bool downgradedToPartner = false;
+    PartnerPick? remainingPartnerPick;
+    bool wasRemovedCompletely = false;
+
     setState(() {
       _allSpots = _allSpots.map((spot) {
         if (spot.id != target.id) return spot;
         if (!spot.isFavorite) {
           return spot.copyWith(
             isFavorite: true,
-            pickedBy: _myRole,
+            pickedBy: kIsWeb ? PartnerPick.me : _myRole,
+          );
+        } else if (!kIsWeb &&
+            spot.pickedBy != null &&
+            spot.pickedBy != _myRole &&
+            spot.pickedBy != PartnerPick.both &&
+            spot.pickedBy != PartnerPick.me) {
+          // 相手が付けていたスポットに自分もハートを押したら「💑 2人とも行きたい！」に昇格
+          upgradedToBoth = true;
+          return spot.copyWith(
+            isFavorite: true,
+            pickedBy: PartnerPick.both,
+          );
+        } else if (!kIsWeb && spot.pickedBy == PartnerPick.both) {
+          // 「2人とも」状態から自分のハートを外す場合は、相手の候補まで消さないよう相手分だけ残す
+          downgradedToPartner = true;
+          remainingPartnerPick = _myRole == PartnerPick.husband
+              ? PartnerPick.wife
+              : PartnerPick.husband;
+          return spot.copyWith(
+            isFavorite: true,
+            pickedBy: remainingPartnerPick,
           );
         } else {
+          wasRemovedCompletely = true;
           return spot.copyWith(
             isFavorite: false,
             coupleNote: '',
@@ -914,30 +1011,67 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     });
 
-    await CoupleSyncService.pushToCloud(
-      roomCode: _coupleRoomCode,
-      favorites: _favoriteSpots,
-    );
-    final lastSync = await CoupleSyncService.getLastSyncLabel();
-    if (mounted) {
-      setState(() => _syncStatusLabel = lastSync);
+    if (wasRemovedCompletely) {
+      await CoupleSyncService.recordSpotDeletion(target.id);
+    } else {
+      await CoupleSyncService.recordSpotChange(target.id);
     }
 
-    final updated = _allSpots.firstWhere((s) => s.id == target.id);
+    await _pushAndSyncFavorites();
+
+    final updated = _allSpots.firstWhere(
+      (s) => s.id == target.id,
+      orElse: () => target,
+    );
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
+    final pickBadge = updated.pickedBy ?? _myRole;
+    final String msg;
+    if (upgradedToBoth) {
+      msg = '💑 「${updated.title}」が『2人とも行きたい！』になりました！';
+    } else if (downgradedToPartner && remainingPartnerPick != null) {
+      msg =
+          '自分の行きたいを解除しました（${remainingPartnerPick!.icon} ${remainingPartnerPick!.label} として残ります）';
+    } else if (updated.isFavorite) {
+      msg = kIsWeb
+          ? '❤️ 「${updated.title}」を行きたい！リストに追加しました'
+          : '❤️ 「${updated.title}」を【${pickBadge.icon} ${pickBadge.label}】として追加しました！';
+    } else {
+      msg = '「${updated.title}」を行きたい！リストから外しました';
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          updated.isFavorite
-              ? '❤️ 「${updated.title}」を行きたい！リストに追加しました'
-              : '「${updated.title}」を行きたい！リストから外しました',
-        ),
+        content: Text(msg),
         duration: const Duration(seconds: 2),
       ),
     );
 
     // お気に入り変更に伴い夫婦の好みを再分析
+    _fetchCoupleAiInsight();
+  }
+
+  /// お気に入り画面の削除ボタンからスポットを完全に外す
+  Future<void> _removeFavoriteCompletely(OutingSpot target) async {
+    setState(() {
+      _allSpots = _allSpots.map((spot) {
+        if (spot.id != target.id) return spot;
+        return spot.copyWith(
+          isFavorite: false,
+          coupleNote: '',
+        );
+      }).toList();
+    });
+    await CoupleSyncService.recordSpotDeletion(target.id);
+    await _pushAndSyncFavorites();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('「${target.title}」を行きたい！リストから削除しました'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
     _fetchCoupleAiInsight();
   }
 
@@ -955,14 +1089,8 @@ class _HomeScreenState extends State<HomeScreen> {
       }).toList();
     });
 
-    await CoupleSyncService.pushToCloud(
-      roomCode: _coupleRoomCode,
-      favorites: _favoriteSpots,
-    );
-    final lastSync = await CoupleSyncService.getLastSyncLabel();
-    if (mounted) {
-      setState(() => _syncStatusLabel = lastSync);
-    }
+    await CoupleSyncService.recordSpotChange(target.id);
+    await _pushAndSyncFavorites();
 
     // メモや担当者更新に伴い夫婦の好みを再分析
     _fetchCoupleAiInsight();
@@ -975,18 +1103,15 @@ class _HomeScreenState extends State<HomeScreen> {
         if (spot.id != updated.id) return spot;
         return updated.copyWith(
           isFavorite: true,
-          pickedBy: updated.pickedBy ?? PartnerPick.both,
+          pickedBy: updated.pickedBy ??
+              (kIsWeb ? PartnerPick.me : PartnerPick.both),
         );
       }).toList();
     });
 
-    await CoupleSyncService.pushToCloud(
-      roomCode: _coupleRoomCode,
-      favorites: _favoriteSpots,
-    );
-    final lastSync = await CoupleSyncService.getLastSyncLabel();
+    await CoupleSyncService.recordSpotChange(updated.id);
+    await _pushAndSyncFavorites();
     if (mounted) {
-      setState(() => _syncStatusLabel = lastSync);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -1489,6 +1614,34 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          if (!kIsWeb)
+            // このスマホの使用者（夫 / 妻）ワンタップ切替バッジ（Android版のみ）
+            Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: Tooltip(
+                message: 'タップで「夫 / 妻」を切替（ハート押下時に自動識別）',
+                child: SafeActionChip(
+                  visualDensity: VisualDensity.compact,
+                  avatar: Text(
+                    _myRole.icon,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  label: Text(
+                    _myRole == PartnerPick.wife ? '妻' : '夫',
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  onPressed: () {
+                    final nextRole = _myRole == PartnerPick.husband
+                        ? PartnerPick.wife
+                        : PartnerPick.husband;
+                    _setMyRole(nextRole);
+                  },
+                ),
+              ),
+            ),
           IconButton(
             tooltip: '📅 イベント期間指定',
             onPressed: () => _showDateRangeSelectorSheet(context),
@@ -1532,7 +1685,7 @@ class _HomeScreenState extends State<HomeScreen> {
               },
               onUpdateFavorite: _updateFavoriteDetail,
               onUpdateVisitedSpot: _updateVisitedSpot,
-              onRemoveFavorite: _toggleFavorite,
+              onRemoveFavorite: _removeFavoriteCompletely,
               onOpenSpotDetail: (spot) => _showSpotDetailSheet(context, spot),
             ),
           ),
@@ -1593,7 +1746,7 @@ class _HomeScreenState extends State<HomeScreen> {
               label: Text('${_favoriteSpots.length}'),
               child: const Icon(Icons.favorite),
             ),
-            label: '行きたい！リスト',
+            label: kIsWeb ? '行きたい！リスト' : '夫婦の行きたい！',
           ),
           NavigationDestination(
             icon: Badge(
@@ -1687,7 +1840,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         final isSelected = _selectedRegion == region;
                         return Padding(
                           padding: const EdgeInsets.only(right: 6),
-                          child: ChoiceChip(
+                          child: SafeChoiceChip(
                             avatar: Text(
                               region.icon,
                               style: const TextStyle(fontSize: 13),
@@ -1723,11 +1876,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      ...SpotCategory.values.where((cat) => cat != SpotCategory.gourmet).map((cat) {
+                      ...SpotCategory.values
+                          .where((cat) => cat != SpotCategory.gourmet)
+                          .map((cat) {
                         final isSelected = _selectedCategory == cat;
                         return Padding(
                           padding: const EdgeInsets.only(right: 8),
-                          child: ChoiceChip(
+                          child: SafeChoiceChip(
                             avatar: Text(cat.icon,
                                 style: const TextStyle(fontSize: 15)),
                             label: Text(
@@ -1751,7 +1906,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         );
                       }),
-                      ChoiceChip(
+                      SafeChoiceChip(
                         label:
                             const Text('すべて', style: TextStyle(fontSize: 12.5)),
                         selected:
@@ -1768,7 +1923,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      ActionChip(
+                      SafeActionChip(
                         avatar: Icon(
                           Icons.calendar_month,
                           size: 16,
@@ -1788,7 +1943,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         onPressed: () => _showDateRangeSelectorSheet(context),
                       ),
                       const SizedBox(width: 6),
-                      FilterChip(
+                      SafeFilterChip(
                         avatar: const Text('☔', style: TextStyle(fontSize: 13)),
                         label: const Text('雨・寒い日安心モード',
                             style: TextStyle(
@@ -1801,7 +1956,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         },
                       ),
                       const SizedBox(width: 6),
-                      ActionChip(
+                      SafeActionChip(
                         avatar: const Text('🎰', style: TextStyle(fontSize: 13)),
                         label: const Text('おみくじルーレット',
                             style: TextStyle(
@@ -1811,7 +1966,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         onPressed: () => _showExploreRouletteDialog(context),
                       ),
                       const SizedBox(width: 6),
-                      ActionChip(
+                      SafeActionChip(
                         avatar: const Text('📒', style: TextStyle(fontSize: 13)),
                         label: const Text('大阪・名古屋 / 旅のしおり',
                             style: TextStyle(
@@ -1821,7 +1976,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         onPressed: () => setState(() => _currentTabIndex = 3),
                       ),
                       const SizedBox(width: 6),
-                      FilterChip(
+                      SafeFilterChip(
                         avatar: Text(SpotTag.freeParking.icon,
                             style: const TextStyle(fontSize: 13)),
                         label: Text(SpotTag.freeParking.label,
@@ -1837,7 +1992,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         },
                       ),
                       const SizedBox(width: 6),
-                      FilterChip(
+                      SafeFilterChip(
                         avatar: Text(SpotTag.freeEntry.icon,
                             style: const TextStyle(fontSize: 13)),
                         label: Text(SpotTag.freeEntry.label,
@@ -2024,7 +2179,7 @@ class _HomeScreenState extends State<HomeScreen> {
           // タイトル行 ＆ 再分析ボタン
           Row(
             children: [
-              const Text('✨ ', style: TextStyle(fontSize: 18)),
+              const Text('💑 ', style: TextStyle(fontSize: 18)),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2032,7 +2187,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Row(
                       children: [
                         const Text(
-                          'お出かけ好みAIナビ',
+                          '夫婦の好みAIナビ',
                           style: TextStyle(
                             fontSize: 13.5,
                             fontWeight: FontWeight.bold,
@@ -2060,7 +2215,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     Text(
                       favCount > 0
-                          ? 'お気に入り（$favCount件）から好みをAI分析'
+                          ? '夫婦のお気に入り（$favCount件）から好みをAI分析'
                           : '気になるスポットの❤️を押すと好みをAI分析',
                       style: TextStyle(
                         fontSize: 11,
@@ -2082,7 +2237,7 @@ class _HomeScreenState extends State<HomeScreen> {
               else
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 20),
-                  tooltip: '好みを再分析',
+                  tooltip: '夫婦の好みを再分析',
                   visualDensity: VisualDensity.compact,
                   color: Colors.pink.shade700,
                   onPressed: () => _fetchCoupleAiInsight(forceRefresh: true),
@@ -2637,7 +2792,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   spacing: 6,
                   runSpacing: 6,
                   children: [
-                    ActionChip(
+                    SafeActionChip(
                       avatar: const Text('🚗', style: TextStyle(fontSize: 12)),
                       label: const Text('1日ドライブしおり作成',
                           style: TextStyle(
@@ -2646,14 +2801,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       visualDensity: VisualDensity.compact,
                       onPressed: () => _createDayDrivePlanFromSpot(spot),
                     ),
-                    ActionChip(
+                    SafeActionChip(
                       avatar: const Text('📋', style: TextStyle(fontSize: 12)),
                       label: const Text('しおりに追加',
                           style: TextStyle(fontSize: 11.5)),
                       visualDensity: VisualDensity.compact,
                       onPressed: () => _addSpotToCurrentTripPlan(spot),
                     ),
-                    ActionChip(
+                    SafeActionChip(
                       avatar: const Text('🌲', style: TextStyle(fontSize: 12)),
                       label: const Text('TimeTree・カレンダー',
                           style: TextStyle(fontSize: 11.5)),
@@ -2662,7 +2817,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       onPressed: () =>
                           _showSpotCalendarAndTimeTreeSheet(context, spot),
                     ),
-                    ActionChip(
+                    SafeActionChip(
                       avatar: const Text('💮', style: TextStyle(fontSize: 12)),
                       label: Text(
                         spot.isVisited ? '行ったよ編集' : '行ったよ！記録',
@@ -2918,7 +3073,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (_mapAreaCategory != null)
                       Padding(
                         padding: const EdgeInsets.only(right: 6),
-                        child: ActionChip(
+                        child: SafeActionChip(
                           avatar: const Icon(Icons.close,
                               size: 15, color: Colors.red),
                           label: const Text(
@@ -3245,7 +3400,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final isSelected = _mapAreaCategory == category;
     return Padding(
       padding: const EdgeInsets.only(right: 6),
-      child: ActionChip(
+      child: SafeActionChip(
         label: Text(
           isSelected ? '$label ✕' : label,
           style: TextStyle(
@@ -3301,11 +3456,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     runSpacing: 6,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Chip(
+                      SafeChip(
                         avatar: Text(spot.category.icon),
                         label: Text(spot.category.label),
                       ),
-                      Chip(
+                      SafeChip(
                         avatar: Text(spot.sourceBadgeIcon),
                         label: Text(spot.sourceBadgeLabel),
                         backgroundColor: _getSourceBadgeColor(spot)
@@ -3334,7 +3489,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     spacing: 6,
                     runSpacing: 6,
                     children: spot.tags
-                        .map((t) => Chip(
+                        .map((t) => SafeChip(
                               label: Text('${t.icon} ${t.label}'),
                               visualDensity: VisualDensity.compact,
                             ))
@@ -3521,7 +3676,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           spacing: 6,
                           runSpacing: 6,
                           children: [
-                            ActionChip(
+                            SafeActionChip(
                               label: const Text('🍽️ 近くの食事処・ランチ',
                                   style: TextStyle(fontSize: 12)),
                               onPressed: () {
@@ -3530,7 +3685,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     spot, SpotCategory.dining);
                               },
                             ),
-                            ActionChip(
+                            SafeActionChip(
                               label: const Text('📸 近くの観光地・名所',
                                   style: TextStyle(fontSize: 12)),
                               onPressed: () {
@@ -3539,7 +3694,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     spot, SpotCategory.tourism);
                               },
                             ),
-                            ActionChip(
+                            SafeActionChip(
                               label: const Text('♨️ 近くの温泉・銭湯',
                                   style: TextStyle(fontSize: 12)),
                               onPressed: () {
@@ -3548,7 +3703,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     spot, SpotCategory.onsen);
                               },
                             ),
-                            ActionChip(
+                            SafeActionChip(
                               label: const Text('⛩️ 近くの神社仏閣',
                                   style: TextStyle(fontSize: 12)),
                               onPressed: () {
@@ -3557,7 +3712,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     spot, SpotCategory.sightseeing);
                               },
                             ),
-                            ActionChip(
+                            SafeActionChip(
                               label: const Text('🏃 近くの大きな公園',
                                   style: TextStyle(fontSize: 12)),
                               onPressed: () {
@@ -3591,7 +3746,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     spacing: 6,
                     runSpacing: 6,
                     children: [
-                      ActionChip(
+                      SafeActionChip(
                         avatar: const Text('🚗'),
                         label: const Text('1日ドライブしおり作成',
                             style: TextStyle(
@@ -3602,7 +3757,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           _createDayDrivePlanFromSpot(spot);
                         },
                       ),
-                      ActionChip(
+                      SafeActionChip(
                         avatar: const Text('🌲'),
                         label: const Text('TimeTree・カレンダー連携',
                             style: TextStyle(
@@ -3614,7 +3769,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               this.context, spot);
                         },
                       ),
-                      ActionChip(
+                      SafeActionChip(
                         avatar: const Text('💮'),
                         label: Text(
                           spot.isVisited ? '行ったよスタンプ編集' : '行ったよ！スタンプ',
