@@ -496,6 +496,9 @@ class OutingSpot {
   /// 💮 行ったときの思い出ひとことメモ
   final String visitedMemory;
 
+  /// 📸 行ったときの思い出写真（圧縮済みBase64 Data URIまたはURL、最大4枚）
+  final List<String> visitedPhotos;
+
   /// ⭐ Googleマップの星評価（例: 4.3）
   final double? googleRating;
 
@@ -530,6 +533,7 @@ class OutingSpot {
     this.visitedDate = '',
     this.visitedRating = 5,
     this.visitedMemory = '',
+    this.visitedPhotos = const [],
     this.googleRating,
     this.googleRatingCount,
     this.googleReviews = const [],
@@ -734,6 +738,7 @@ class OutingSpot {
     String? visitedDate,
     int? visitedRating,
     String? visitedMemory,
+    List<String>? visitedPhotos,
     double? googleRating,
     int? googleRatingCount,
     List<String>? googleReviews,
@@ -763,6 +768,7 @@ class OutingSpot {
       visitedDate: visitedDate ?? this.visitedDate,
       visitedRating: visitedRating ?? this.visitedRating,
       visitedMemory: visitedMemory ?? this.visitedMemory,
+      visitedPhotos: visitedPhotos ?? this.visitedPhotos,
       googleRating: googleRating ?? this.googleRating,
       googleRatingCount: googleRatingCount ?? this.googleRatingCount,
       googleReviews: googleReviews ?? this.googleReviews,
@@ -789,6 +795,7 @@ class OutingSpot {
       'visitedDate': visitedDate,
       'visitedRating': visitedRating,
       'visitedMemory': visitedMemory,
+      if (visitedPhotos.isNotEmpty) 'visitedPhotos': visitedPhotos,
       if (url.isNotEmpty) 'url': url,
     };
   }
@@ -819,6 +826,7 @@ class OutingSpot {
       'visitedDate': visitedDate,
       'visitedRating': visitedRating,
       'visitedMemory': visitedMemory,
+      if (visitedPhotos.isNotEmpty) 'visitedPhotos': visitedPhotos,
       if (googleRating != null) 'googleRating': googleRating,
       if (googleRatingCount != null) 'googleRatingCount': googleRatingCount,
       if (googleReviews.isNotEmpty) 'googleReviews': googleReviews,
@@ -848,6 +856,9 @@ class OutingSpot {
     final rawReviews = json['googleReviews'] as List<dynamic>? ?? [];
     final reviews = rawReviews.map((r) => r.toString()).toList();
 
+    final rawPhotos = json['visitedPhotos'] as List<dynamic>? ?? [];
+    final photos = rawPhotos.map((p) => p.toString()).where((p) => p.isNotEmpty).toList();
+
     return OutingSpot(
       id: json['id'] as String? ?? '',
       title: json['title'] as String? ?? '',
@@ -873,6 +884,7 @@ class OutingSpot {
       visitedDate: json['visitedDate'] as String? ?? '',
       visitedRating: (json['visitedRating'] as num?)?.toInt() ?? 5,
       visitedMemory: json['visitedMemory'] as String? ?? '',
+      visitedPhotos: photos,
       googleRating: (json['googleRating'] as num?)?.toDouble(),
       googleRatingCount: (json['googleRatingCount'] as num?)?.toInt(),
       googleReviews: reviews,
