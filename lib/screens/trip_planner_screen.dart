@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/outing_spot.dart';
 import '../services/gemini_service.dart';
+import '../services/monetization_service.dart';
 
 class TripPlannerScreen extends StatefulWidget {
   final List<TripPlan> tripPlans;
@@ -12,6 +13,8 @@ class TripPlannerScreen extends StatefulWidget {
   final ValueChanged<List<TripPlan>> onUpdateTrips;
   final String coupleRoomCode;
   final VoidCallback onTriggerSync;
+  final bool isPremium;
+  final VoidCallback? onOpenPremium;
 
   const TripPlannerScreen({
     super.key,
@@ -21,6 +24,8 @@ class TripPlannerScreen extends StatefulWidget {
     required this.onUpdateTrips,
     required this.coupleRoomCode,
     required this.onTriggerSync,
+    this.isPremium = false,
+    this.onOpenPremium,
   });
 
   @override
@@ -203,6 +208,65 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                     },
                   ),
                 ],
+              ),
+              const SizedBox(height: 8),
+
+              // アフィリエイト予約連携バー（PR表記付き）
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 2),
+                      margin: const EdgeInsets.only(right: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.brown.shade700,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'PR',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    ActionChip(
+                      avatar: const Text('🏨', style: TextStyle(fontSize: 12)),
+                      label: const Text('じゃらんで宿を探す',
+                          style: TextStyle(fontSize: 11.5)),
+                      visualDensity: VisualDensity.compact,
+                      backgroundColor: Colors.white,
+                      onPressed: () => _launchWebUrl(
+                        AffiliateLinkBuilder.buildJalanUrl(plan.title),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    ActionChip(
+                      avatar: const Text('🎟️', style: TextStyle(fontSize: 12)),
+                      label: const Text('アソビューで割引体験',
+                          style: TextStyle(fontSize: 11.5)),
+                      visualDensity: VisualDensity.compact,
+                      backgroundColor: Colors.white,
+                      onPressed: () => _launchWebUrl(
+                        AffiliateLinkBuilder.buildAsoviewUrl(plan.title),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    ActionChip(
+                      avatar: const Text('🛎️', style: TextStyle(fontSize: 12)),
+                      label: const Text('楽天トラベル',
+                          style: TextStyle(fontSize: 11.5)),
+                      visualDensity: VisualDensity.compact,
+                      backgroundColor: Colors.white,
+                      onPressed: () => _launchWebUrl(
+                        AffiliateLinkBuilder.buildRakutenTravelUrl(plan.title),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -705,8 +769,39 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
     );
   }
 
+  bool _canCreateAdditionalTrip(BuildContext context) {
+    if (widget.isPremium ||
+        widget.tripPlans.length < MonetizationService.freeMaxTrips) {
+      return true;
+    }
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('👑 旅のしおり複数作成'),
+        content: const Text(
+          'フリープランでは旅のしおりは${MonetizationService.freeMaxTrips}冊まで作成できます（既存のしおりの編集・日程追加は自由に行えます）。\n\nファミリープレミアムにアップグレードすると、旅行ごとに無制限でしおりを作成できます！',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('閉じる'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              widget.onOpenPremium?.call();
+            },
+            child: const Text('プレミアムを見る'),
+          ),
+        ],
+      ),
+    );
+    return false;
+  }
+
   /// 新しい空のしおりを作成するダイアログ
   void _showCreateNewPlanDialog(BuildContext context) {
+    if (!_canCreateAdditionalTrip(context)) return;
     final titleCtrl = TextEditingController();
     final subCtrl = TextEditingController();
     int days = 2;
@@ -890,6 +985,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
 
   /// 🤖 AIで旅行プラン（大阪・名古屋や全国どこでも）を自動作成するシート
   void _showAiGeneratorSheet(BuildContext context) {
+    if (!_canCreateAdditionalTrip(context)) return;
     final themeCtrl = TextEditingController(
       text: '大阪・名古屋 家族旅行（USJ・海遊館・ジブリパーク・名古屋めし）',
     );

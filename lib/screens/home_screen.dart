@@ -9,8 +9,10 @@ import '../config/api_keys.local.dart';
 import '../models/outing_spot.dart';
 import '../services/gemini_service.dart';
 import '../services/location_service.dart';
+import '../services/monetization_service.dart';
 import '../services/sync_service.dart';
 import '../services/weather_service.dart';
+import '../widgets/monetization_widgets.dart';
 import 'dart:math';
 import 'favorites_screen.dart';
 import 'trip_planner_screen.dart';
@@ -51,11 +53,12 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 選択中地域の週末天気予報
   AreaWeatherSummary? _currentRegionWeather;
 
-  /// イベント検索の対象期間（デフォルト：直近の週末 土曜〜日曜）
+  /// 天気予報取得用の対象週末期間（デフォルト：直近の週末 土曜〜日曜）
   late DateTimeRange _targetDateRange;
 
-  /// 期間選択の状態ラベル（'直近の週末', '来週末', '期間指定'）
-  String _dateRangePresetLabel = '直近の週末';
+  /// 商用版：プレミアム会員フラグ＆本日の残り無料検索回数
+  bool _isPremium = false;
+  int _remainingSearches = MonetizationService.freeDailySearchLimit;
 
   /// 選択中の種別フィルタ
   SpotCategory? _selectedCategory;
@@ -145,9 +148,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _targetDateRange = GeminiOutingService.getUpcomingWeekendRange();
     _allSpots = GeminiOutingService.getInitialSpots();
     _selectedMapSpot = _allSpots.first;
-    final dateText = GeminiOutingService.formatDateRange(_targetDateRange);
     _aiSummaryComment =
-        '🎪 【${_selectedRegion.label}】直近の週末（$dateText）開催イベントや、定番お出かけスポットを表示しています！';
+        '🗺️ 【${_selectedRegion.label}】Googleマップ＆AIによる厳選お出かけスポットを表示しています！';
+    _initMonetization();
     _initCoupleSync();
 
     // スクロール位置を監視して「トップに戻るボタン」の表示/非表示を切り替え
@@ -529,121 +532,83 @@ class _HomeScreenState extends State<HomeScreen> {
     _fetchCoupleAiInsight();
   }
 
-  /// 期間指定ダイアログ・カレンダーピッカーを開く
-  Future<void> _showDateRangeSelectorSheet(BuildContext context) async {
-    final upcoming = GeminiOutingService.getUpcomingWeekendRange();
-    final following = GeminiOutingService.getFollowingWeekendRange();
+  /// 商用版：プレミアム会員状態と本日の検索残り回数を読み込み
+  Future<void> _initMonetization() async {
+    final prem = await MonetizationService.isPremium();
+    final rem = await MonetizationService.getRemainingSearches();
+    if (!mounted) return;
+    setState(() {
+      _isPremium = prem;
+      _remainingSearches = rem;
+    });
+  }
 
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetCtx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Text('📅 ', style: TextStyle(fontSize: 20)),
-                    Text(
-                      'イベントの開催期間を指定',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  '指定した週末や日付範囲に開催されている期間限定イベント・マルシェを検索します。',
-                  style: TextStyle(fontSize: 12.5, color: Colors.grey),
-                ),
-                const Divider(height: 20),
-                ListTile(
-                  leading: const Icon(Icons.weekend_outlined),
-                  title: Text(
-                    '直近の週末（${GeminiOutingService.formatDateRange(upcoming)}）',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: const Text('今度の土曜日・日曜日に開催中のイベント'),
-                  trailing: _dateRangePresetLabel == '直近の週末'
-                      ? const Icon(Icons.check_circle, color: Colors.teal)
-                      : null,
-                  onTap: () {
-                    Navigator.of(sheetCtx).pop();
-                    setState(() {
-                      _targetDateRange = upcoming;
-                      _dateRangePresetLabel = '直近の週末';
-                    });
-                    _fetchRegionWeather(_selectedRegion, upcoming);
-                    _runAiSearch(null, _selectedCategory);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.event_available_outlined),
-                  title: Text(
-                    '来週末（${GeminiOutingService.formatDateRange(following)}）',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: const Text('次の週の土曜日・日曜日に開催されるイベント'),
-                  trailing: _dateRangePresetLabel == '来週末'
-                      ? const Icon(Icons.check_circle, color: Colors.teal)
-                      : null,
-                  onTap: () {
-                    Navigator.of(sheetCtx).pop();
-                    setState(() {
-                      _targetDateRange = following;
-                      _dateRangePresetLabel = '来週末';
-                    });
-                    _fetchRegionWeather(_selectedRegion, following);
-                    _runAiSearch(null, _selectedCategory);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.calendar_month),
-                  title: const Text(
-                    'カレンダーから期間を自由に指定...',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: const Text('三連休や特定の日付を指定して調べる'),
-                  trailing: _dateRangePresetLabel == '期間指定'
-                      ? const Icon(Icons.check_circle, color: Colors.teal)
-                      : const Icon(Icons.chevron_right),
-                  onTap: () async {
-                    Navigator.of(sheetCtx).pop();
-                    final now = DateTime.now();
-                    final picked = await showDateRangePicker(
-                      context: context,
-                      firstDate: DateTime(now.year, now.month, 1),
-                      lastDate: DateTime(now.year + 1, 12, 31),
-                      initialDateRange: _targetDateRange,
-                      helpText: 'イベントを調べる期間（開始日〜終了日）を選択',
-                      saveText: 'この期間で検索',
-                    );
-                    if (picked != null && mounted) {
-                      setState(() {
-                        _targetDateRange = picked;
-                        _dateRangePresetLabel = '期間指定';
-                      });
-                      _fetchRegionWeather(_selectedRegion, picked);
-                      _runAiSearch(null, _selectedCategory);
-                    }
-                  },
-                ),
-              ],
-            ),
-          ),
-        );
+  /// ファミリープレミアム案内＆プレビュー切替シートを開く
+  Future<void> _openPremiumSheet() async {
+    await showPremiumPlanSheet(
+      context,
+      isPremium: _isPremium,
+      remainingSearches: _remainingSearches,
+      onTogglePremium: (val) async {
+        await MonetizationService.setPremium(val);
+        if (!mounted) return;
+        setState(() => _isPremium = val);
+      },
+      onResetQuota: () async {
+        final resetVal = await MonetizationService.resetDailyQuota();
+        if (!mounted) return;
+        setState(() => _remainingSearches = resetVal);
       },
     );
   }
 
-  /// 通常検索（地域タブ＋期間指定＋フリーワード）を実行する
+  /// 検索回数の消費チェック（無料枠0のときはリワード広告回復 or プレミアム案内を表示）
+  Future<bool> _consumeSearchQuotaOrShowAd() async {
+    if (_isPremium) return true;
+    final ok = await MonetizationService.tryConsumeSearch();
+    final rem = await MonetizationService.getRemainingSearches();
+    if (mounted) {
+      setState(() => _remainingSearches = rem);
+    }
+    if (ok) return true;
+
+    if (!mounted) return false;
+    bool recovered = false;
+    await showSearchQuotaExceededDialog(
+      context,
+      onRewardCompleted: () async {
+        recovered = true;
+        final newRem = await MonetizationService.grantRewardSearchBonus();
+        if (!mounted) return;
+        setState(() => _remainingSearches = newRem);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '🎬 広告視聴ありがとうございます！検索回数が +${MonetizationService.rewardRecoveryAmount}回（残り$newRem回）回復しました',
+            ),
+          ),
+        );
+      },
+      onOpenPremium: _openPremiumSheet,
+    );
+    if (recovered) {
+      final retryOk = await MonetizationService.tryConsumeSearch();
+      final afterRem = await MonetizationService.getRemainingSearches();
+      if (mounted) {
+        setState(() => _remainingSearches = afterRem);
+      }
+      return retryOk;
+    }
+    return false;
+  }
+
+  /// 通常検索（地域タブ＋フリーワード＋ジャンル）を実行する
   Future<void> _runAiSearch([
     String? presetQuery,
     SpotCategory? explicitCategory,
   ]) async {
+    if (!await _consumeSearchQuotaOrShowAd()) return;
+
     if (presetQuery != null) {
       _searchController.text = presetQuery;
       if (explicitCategory == null) {
@@ -679,6 +644,8 @@ class _HomeScreenState extends State<HomeScreen> {
     String? customQuery,
     OutingSpot? centerOnSpot,
   }) async {
+    if (!await _consumeSearchQuotaOrShowAd()) return;
+
     final targetCenter = centerOnSpot != null
         ? LatLng(centerOnSpot.latitude, centerOnSpot.longitude)
         : _mapCenterLatLng;
@@ -891,6 +858,34 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// お気に入りON/OFF切り替え
   Future<void> _toggleFavorite(OutingSpot target) async {
+    if (!target.isFavorite &&
+        !_isPremium &&
+        _favoriteSpots.length >= MonetizationService.freeMaxFavorites) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('❤️ お気に入り保存上限'),
+          content: const Text(
+            'フリープランではお気に入り＆スタンプ帳は${MonetizationService.freeMaxFavorites}件まで保存できます。\n\nファミリープレミアムなら無制限に保存できます！',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('閉じる'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                _openPremiumSheet();
+              },
+              child: const Text('プレミアムを見る'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _allSpots = _allSpots.map((spot) {
         if (spot.id != target.id) return spot;
@@ -1447,7 +1442,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final dateLabel = GeminiOutingService.formatDateRange(_targetDateRange);
 
     return Scaffold(
       appBar: AppBar(
@@ -1477,7 +1471,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                   ),
                   Text(
-                    '地域: ${_selectedRegion.label} ｜ 期間: $dateLabel（$_dateRangePresetLabel）',
+                    'エリア: ${_selectedRegion.label} ｜ ${_isPremium ? "👑 プレミアム" : "🔍 無料検索 残り$_remainingSearches回"}',
                     style: TextStyle(
                       fontSize: 11,
                       color: colorScheme.onSurfaceVariant,
@@ -1490,9 +1484,14 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: '📅 イベント期間指定',
-            onPressed: () => _showDateRangeSelectorSheet(context),
-            icon: const Icon(Icons.calendar_month_outlined),
+            tooltip: '👑 プラン・広告設定',
+            onPressed: _openPremiumSheet,
+            icon: Icon(
+              _isPremium
+                  ? Icons.workspace_premium
+                  : Icons.workspace_premium_outlined,
+              color: _isPremium ? Colors.amber.shade800 : null,
+            ),
           ),
           IconButton(
             tooltip: '🎒 持ち物チェック',
@@ -1506,48 +1505,65 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: IndexedStack(
-        index: _currentTabIndex,
+      body: Column(
         children: [
-          GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragEnd: _handleHorizontalTabSwipe,
-            child: _buildExploreTab(context),
-          ),
-          _buildGoogleMapTab(context),
-          GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragEnd: _handleHorizontalTabSwipe,
-            child: FavoritesScreen(
-              favoriteSpots: _favoriteSpots,
-              coupleRoomCode: _coupleRoomCode,
-              syncStatusLabel: _syncStatusLabel,
-              myRole: _myRole,
-              onChangeMyRole: _setMyRole,
-              onTriggerSync: _triggerCloudSync,
-              onRoomCodeChanged: (code) async {
-                setState(() => _coupleRoomCode = code);
-                await CoupleSyncService.saveRoomCode(code);
-                _triggerCloudSync();
-              },
-              onUpdateFavorite: _updateFavoriteDetail,
-              onUpdateVisitedSpot: _updateVisitedSpot,
-              onRemoveFavorite: _toggleFavorite,
-              onOpenSpotDetail: (spot) => _showSpotDetailSheet(context, spot),
+          Expanded(
+            child: IndexedStack(
+              index: _currentTabIndex,
+              children: [
+                GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragEnd: _handleHorizontalTabSwipe,
+                  child: _buildExploreTab(context),
+                ),
+                _buildGoogleMapTab(context),
+                GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragEnd: _handleHorizontalTabSwipe,
+                  child: FavoritesScreen(
+                    favoriteSpots: _favoriteSpots,
+                    coupleRoomCode: _coupleRoomCode,
+                    syncStatusLabel: _syncStatusLabel,
+                    myRole: _myRole,
+                    onChangeMyRole: _setMyRole,
+                    onTriggerSync: _triggerCloudSync,
+                    onRoomCodeChanged: (code) async {
+                      setState(() => _coupleRoomCode = code);
+                      await CoupleSyncService.saveRoomCode(code);
+                      _triggerCloudSync();
+                    },
+                    onUpdateFavorite: _updateFavoriteDetail,
+                    onUpdateVisitedSpot: _updateVisitedSpot,
+                    onRemoveFavorite: _toggleFavorite,
+                    onOpenSpotDetail: (spot) =>
+                        _showSpotDetailSheet(context, spot),
+                    isPremium: _isPremium,
+                    onOpenPremium: _openPremiumSheet,
+                  ),
+                ),
+                GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragEnd: _handleHorizontalTabSwipe,
+                  child: TripPlannerScreen(
+                    tripPlans: _tripPlans,
+                    selectedTripIndex: _selectedTripIndex,
+                    onSelectTrip: (idx) =>
+                        setState(() => _selectedTripIndex = idx),
+                    onUpdateTrips: _updateTripPlans,
+                    coupleRoomCode: _coupleRoomCode,
+                    onTriggerSync: _triggerCloudSync,
+                    isPremium: _isPremium,
+                    onOpenPremium: _openPremiumSheet,
+                  ),
+                ),
+              ],
             ),
           ),
-          GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragEnd: _handleHorizontalTabSwipe,
-            child: TripPlannerScreen(
-              tripPlans: _tripPlans,
-              selectedTripIndex: _selectedTripIndex,
-              onSelectTrip: (idx) => setState(() => _selectedTripIndex = idx),
-              onUpdateTrips: _updateTripPlans,
-              coupleRoomCode: _coupleRoomCode,
-              onTriggerSync: _triggerCloudSync,
+          if (!_isPremium)
+            AdBannerBar(
+              onOpenPremium: _openPremiumSheet,
+              onOpenAffiliateUrl: _launchWebUrl,
             ),
-          ),
         ],
       ),
       floatingActionButton: (_currentTabIndex == 0 && _showBackToTop)
@@ -1614,11 +1630,13 @@ class _HomeScreenState extends State<HomeScreen> {
   );
 }
 
-  /// タブ1：東北6県タブ・期間指定・天気予報・ジャンル別スポット検索画面
+  /// タブ1：東北6県タブ・Google検索ベース・天気予報・ジャンル別スポット検索画面
   Widget _buildExploreTab(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final spots = _filteredSpots;
-    final dateRangeStr = GeminiOutingService.formatDateRange(_targetDateRange);
+    final showInFeedAds = !_isPremium && spots.isNotEmpty;
+    final listItemCount =
+        showInFeedAds ? spots.length + (spots.length ~/ 3) : spots.length;
 
     return CustomScrollView(
       controller: _exploreScrollController,
@@ -1718,12 +1736,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 const SizedBox(height: 6),
 
-                // 4. メイン7大ジャンル検索チップ
+                // 4. メイン7大ジャンル検索チップ（Google Places主軸）
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      ...SpotCategory.values.where((cat) => cat != SpotCategory.gourmet).map((cat) {
+                      ...SpotCategory.commercialCategories.map((cat) {
                         final isSelected = _selectedCategory == cat;
                         return Padding(
                           padding: const EdgeInsets.only(right: 8),
@@ -1763,19 +1781,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 6),
 
-                // 5. イベント期間指定ボタン ＆ 駐車場・入場料フィルタ
+                // 5. Google検索ショートカット ＆ 天候・駐車場・入場料フィルタ
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
                       ActionChip(
                         avatar: Icon(
-                          Icons.calendar_month,
+                          Icons.travel_explore,
                           size: 16,
                           color: colorScheme.primary,
                         ),
                         label: Text(
-                          '期間: $dateRangeStr（$_dateRangePresetLabel）',
+                          'Googleで${_selectedRegion.label}のイベント検索',
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
@@ -1785,7 +1803,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         visualDensity: VisualDensity.compact,
                         backgroundColor:
                             colorScheme.primaryContainer.withValues(alpha: 0.4),
-                        onPressed: () => _showDateRangeSelectorSheet(context),
+                        onPressed: () => _launchWebUrl(
+                          AffiliateLinkBuilder.buildGoogleEventSearchUrl(
+                            areaName: _selectedRegion.label,
+                          ),
+                        ),
                       ),
                       const SizedBox(width: 6),
                       FilterChip(
@@ -1888,7 +1910,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      '${_selectedRegion.label}のイベント・お出かけスポットを検索中...',
+                                      '${_selectedRegion.label}のお出かけスポットを検索中...',
                                       style: const TextStyle(
                                           fontSize: 12.5,
                                           fontWeight: FontWeight.bold),
@@ -1917,7 +1939,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
 
-        // 提案スポットカード一覧
+        // 提案スポットカード一覧（フリープラン時は3件ごとにネイティブPRカードを挿入）
         if (spots.isEmpty)
           SliverFillRemaining(
             hasScrollBody: false,
@@ -1954,8 +1976,21 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
-                (context, index) => _buildSpotCard(context, spots[index]),
-                childCount: spots.length,
+                (context, index) {
+                  if (showInFeedAds && (index + 1) % 4 == 0) {
+                    final slotIndex = ((index + 1) ~/ 4) - 1;
+                    return InFeedNativeAdCard(
+                      slotIndex: slotIndex,
+                      regionLabel: _selectedRegion.label,
+                      onOpenAffiliateUrl: _launchWebUrl,
+                      onOpenPremium: _openPremiumSheet,
+                    );
+                  }
+                  final spotIndex =
+                      showInFeedAds ? index - ((index + 1) ~/ 4) : index;
+                  return _buildSpotCard(context, spots[spotIndex]);
+                },
+                childCount: listItemCount,
               ),
             ),
           ),
@@ -3573,6 +3608,99 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFFBF2),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.amber.shade300),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.shade800,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text(
+                                'PR',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Expanded(
+                              child: Text(
+                                '周辺の宿・割引体験・最新イベントを調べる',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            ActionChip(
+                              label: const Text('🏨 じゃらんで周辺の宿・温泉 (PR)',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600)),
+                              backgroundColor: Colors.orange.shade50,
+                              onPressed: () => _launchWebUrl(
+                                AffiliateLinkBuilder.buildJalanUrl(spot.title),
+                              ),
+                            ),
+                            ActionChip(
+                              label: const Text('🎟️ アソビュー！で割引体験 (PR)',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600)),
+                              backgroundColor: Colors.teal.shade50,
+                              onPressed: () => _launchWebUrl(
+                                AffiliateLinkBuilder.buildAsoviewUrl(
+                                    spot.title),
+                              ),
+                            ),
+                            ActionChip(
+                              label: const Text('🛎️ 楽天トラベル (PR)',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600)),
+                              backgroundColor: Colors.red.shade50,
+                              onPressed: () => _launchWebUrl(
+                                AffiliateLinkBuilder.buildRakutenTravelUrl(
+                                    spot.title),
+                              ),
+                            ),
+                            ActionChip(
+                              label: const Text('🔍 Googleで最新情報・イベント検索',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold)),
+                              backgroundColor: Colors.blue.shade50,
+                              onPressed: () =>
+                                  _launchWebUrl(spot.googleSearchUrl),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.tonalIcon(
@@ -3580,8 +3708,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       icon: const Icon(Icons.open_in_new, size: 18),
                       label: Text(
                         spot.url.isNotEmpty
-                            ? '🌐 ${spot.sourceBadgeLabel}の元記事・公式を開く'
-                            : '🔍 Webで最新情報を検索',
+                            ? '🌐 ${spot.sourceBadgeLabel}の公式ページを開く'
+                            : '🔍 Googleで公式情報を検索',
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -3693,57 +3821,93 @@ class _HomeScreenState extends State<HomeScreen> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             final checkedCount = _packingList.values.where((v) => v).length;
-            return Container(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Text('🎒 ', style: TextStyle(fontSize: 22)),
-                      Text(
-                        'ドライブ持ち物チェック ($checkedCount/${_packingList.length})',
-                        style: const TextStyle(
-                            fontSize: 17, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    '週末のお出かけ前に車に積んだかチェックしましょう！',
-                    style: TextStyle(fontSize: 12.5, color: Colors.grey),
-                  ),
-                  const Divider(height: 20),
-                  ..._packingList.keys.map((item) {
-                    final isChecked = _packingList[item] ?? false;
-                    return CheckboxListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        item,
-                        style: TextStyle(
-                          decoration:
-                              isChecked ? TextDecoration.lineThrough : null,
-                          color: isChecked ? Colors.grey : Colors.black87,
+            return SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text('🎒 ', style: TextStyle(fontSize: 22)),
+                        Expanded(
+                          child: Text(
+                            'ドライブ持ち物チェック ($checkedCount/${_packingList.length})',
+                            style: const TextStyle(
+                                fontSize: 17, fontWeight: FontWeight.bold),
+                          ),
                         ),
-                      ),
-                      value: isChecked,
-                      onChanged: (val) {
-                        setState(() => _packingList[item] = val ?? false);
-                        setModalState(() {});
-                      },
-                    );
-                  }),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
-                      onPressed: () => Navigator.of(sheetContext).pop(),
-                      child: const Text('チェック完了して閉じる'),
+                      ],
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 4),
+                    const Text(
+                      '週末のお出かけ前に車に積んだかチェックしましょう！（※ PR：Amazonリンクを含みます）',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const Divider(height: 20),
+                    ..._packingList.keys.map((item) {
+                      final isChecked = _packingList[item] ?? false;
+                      final amazonKeyword = item.split('（').first;
+                      return Row(
+                        children: [
+                          Expanded(
+                            child: CheckboxListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              title: Text(
+                                item,
+                                style: TextStyle(
+                                  fontSize: 13.5,
+                                  decoration: isChecked
+                                      ? TextDecoration.lineThrough
+                                      : null,
+                                  color:
+                                      isChecked ? Colors.grey : Colors.black87,
+                                ),
+                              ),
+                              value: isChecked,
+                              onChanged: (val) {
+                                setState(
+                                    () => _packingList[item] = val ?? false);
+                                setModalState(() {});
+                              },
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => _launchWebUrl(
+                              AffiliateLinkBuilder.buildAmazonGoodsUrl(
+                                amazonKeyword,
+                              ),
+                            ),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text(
+                              'PR Amazon',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    }),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: () => Navigator.of(sheetContext).pop(),
+                        child: const Text('チェック完了して閉じる'),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           },

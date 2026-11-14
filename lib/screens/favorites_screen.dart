@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/outing_spot.dart';
+import '../services/monetization_service.dart';
 import '../services/sync_service.dart';
 
 class FavoritesScreen extends StatefulWidget {
@@ -19,6 +20,8 @@ class FavoritesScreen extends StatefulWidget {
   final String syncStatusLabel;
   final PartnerPick myRole;
   final ValueChanged<PartnerPick>? onChangeMyRole;
+  final bool isPremium;
+  final VoidCallback? onOpenPremium;
 
   const FavoritesScreen({
     super.key,
@@ -33,6 +36,8 @@ class FavoritesScreen extends StatefulWidget {
     required this.syncStatusLabel,
     this.myRole = PartnerPick.husband,
     this.onChangeMyRole,
+    this.isPremium = false,
+    this.onOpenPremium,
   });
 
   @override
@@ -168,6 +173,44 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   ),
                 ],
               ),
+              if (!widget.isPremium) ...[
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: widget.onOpenPremium,
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    width: double.infinity,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.78),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        const Text('👑 ', style: TextStyle(fontSize: 13)),
+                        Expanded(
+                          child: Text(
+                            'フリー保存枠: ${widget.favoriteSpots.length} / ${MonetizationService.freeMaxFavorites}件',
+                            style: const TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '無制限にする ➔',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

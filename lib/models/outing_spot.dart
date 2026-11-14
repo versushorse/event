@@ -41,6 +41,17 @@ enum SpotCategory {
   final String label;
   final String icon;
   const SpotCategory(this.label, this.icon);
+
+  /// 商用版：スクレイピング対象の期間限定イベントを除いたGoogle Places主軸の7大ジャンル
+  static List<SpotCategory> get commercialCategories => const [
+        dining,
+        tourism,
+        park,
+        onsen,
+        indoor,
+        smallPark,
+        sightseeing,
+      ];
 }
 
 /// 夫婦のお気に入り傾向からGemini 3.5 Flash-Liteが導き出したパーソナライズAI分析結果
@@ -636,6 +647,12 @@ class OutingSpot {
       return url;
     }
     final query = Uri.encodeComponent('$title $address 公式');
+    return 'https://www.google.com/search?q=$query';
+  }
+
+  /// Google検索でスポットの最新情報・混雑・周辺イベントを調べるURL
+  String get googleSearchUrl {
+    final query = Uri.encodeComponent('$title $address 最新情報 イベント');
     return 'https://www.google.com/search?q=$query';
   }
 
