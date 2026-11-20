@@ -1,13 +1,68 @@
 // お出かけスポット・イベントおよび旅のしおりデータモデル定義
+import 'dart:math' as math;
 
-/// 東北6県の地域タブ定義
+/// 全国47都道府県の地域タブ定義（初期表示は東北6県、ユーザー設定で全国カスタマイズ可能）
 enum TohokuRegion {
+  // 東北6県（既存の順序・位置・コードを維持）
   miyagi('宮城県', '📍', 'ar0204', 4, 38.2682, 140.8694),
   yamagata('山形県', '🍒', 'ar0206', 6, 38.2404, 140.3633),
   iwate('岩手県', '⛰️', 'ar0203', 3, 39.7036, 141.1527),
   fukushima('福島県', '🍑', 'ar0207', 7, 37.7503, 140.4676),
   akita('秋田県', '🌾', 'ar0205', 5, 39.7186, 140.1024),
-  aomori('青森県', '🍎', 'ar0202', 2, 40.8244, 140.7400);
+  aomori('青森県', '🍎', 'ar0202', 2, 40.8244, 140.7400),
+
+  // 北海道
+  hokkaido('北海道', '❄️', 'ar0101', 1, 43.0642, 141.3469, areaGroup: '北海道'),
+
+  // 関東（7都県）
+  tokyo('東京都', '🗼', 'ar0313', 13, 35.6895, 139.6917, areaGroup: '関東'),
+  kanagawa('神奈川県', '⛵', 'ar0314', 14, 35.4478, 139.6425, areaGroup: '関東'),
+  saitama('埼玉県', '🌳', 'ar0311', 11, 35.8569, 139.6489, areaGroup: '関東'),
+  chiba('千葉県', '🥜', 'ar0312', 12, 35.6051, 140.1233, areaGroup: '関東'),
+  ibaraki('茨城県', '🌰', 'ar0308', 8, 36.3418, 140.4468, areaGroup: '関東'),
+  tochigi('栃木県', '🍓', 'ar0309', 9, 36.5658, 139.8836, areaGroup: '関東'),
+  gunma('群馬県', '♨️', 'ar0310', 10, 36.3907, 139.0604, areaGroup: '関東'),
+
+  // 中部・北陸（10県）
+  niigata('新潟県', '🍚', 'ar0415', 15, 37.9026, 139.0232, areaGroup: '中部・北陸'),
+  toyama('富山県', '🏔️', 'ar0416', 16, 36.6953, 137.2113, areaGroup: '中部・北陸'),
+  ishikawa('石川県', '🦀', 'ar0417', 17, 36.5947, 136.6256, areaGroup: '中部・北陸'),
+  fukui('福井県', '🦕', 'ar0418', 18, 36.0652, 136.2216, areaGroup: '中部・北陸'),
+  yamanashi('山梨県', '🍇', 'ar0419', 19, 35.6642, 138.5684, areaGroup: '中部・北陸'),
+  nagano('長野県', '🍎', 'ar0420', 20, 36.6513, 138.1810, areaGroup: '中部・北陸'),
+  gifu('岐阜県', '🏡', 'ar0521', 21, 35.3912, 136.7223, areaGroup: '中部・北陸'),
+  shizuoka('静岡県', '🗻', 'ar0522', 22, 34.9769, 138.3831, areaGroup: '中部・北陸'),
+  aichi('愛知県', '🏯', 'ar0523', 23, 35.1802, 136.9066, areaGroup: '中部・北陸'),
+  mie('三重県', '⛩️', 'ar0524', 24, 34.7303, 136.5086, areaGroup: '中部・北陸'),
+
+  // 関西（6府県）
+  shiga('滋賀県', '🌊', 'ar0625', 25, 35.0045, 135.8686, areaGroup: '関西'),
+  kyoto('京都府', '⛩️', 'ar0626', 26, 35.0212, 135.7556, areaGroup: '関西'),
+  osaka('大阪府', '🏯', 'ar0627', 27, 34.6863, 135.5200, areaGroup: '関西'),
+  hyogo('兵庫県', '⚓', 'ar0628', 28, 34.6913, 135.1830, areaGroup: '関西'),
+  nara('奈良県', '🦌', 'ar0629', 29, 34.6851, 135.8328, areaGroup: '関西'),
+  wakayama('和歌山県', '🍊', 'ar0630', 30, 34.2260, 135.1675, areaGroup: '関西'),
+
+  // 中国・四国（9県）
+  tottori('鳥取県', '🐪', 'ar0731', 31, 35.5039, 134.2377, areaGroup: '中国・四国'),
+  shimane('島根県', '⛩️', 'ar0732', 32, 35.4723, 133.0505, areaGroup: '中国・四国'),
+  okayama('岡山県', '🍑', 'ar0733', 33, 34.6618, 133.9350, areaGroup: '中国・四国'),
+  hiroshima('広島県', '🍁', 'ar0734', 34, 34.3966, 132.4596, areaGroup: '中国・四国'),
+  yamaguchi('山口県', '🌉', 'ar0735', 35, 34.1859, 131.4706, areaGroup: '中国・四国'),
+  tokushima('徳島県', '🌀', 'ar0836', 36, 34.0658, 134.5593, areaGroup: '中国・四国'),
+  kagawa('香川県', '🍜', 'ar0837', 37, 34.3401, 134.0434, areaGroup: '中国・四国'),
+  ehime('愛媛県', '🍊', 'ar0838', 38, 33.8416, 132.7654, areaGroup: '中国・四国'),
+  kochi('高知県', '🐋', 'ar0839', 39, 33.5597, 133.5311, areaGroup: '中国・四国'),
+
+  // 九州・沖縄（8県）
+  fukuoka('福岡県', '🍜', 'ar0940', 40, 33.6064, 130.4183, areaGroup: '九州・沖縄'),
+  saga('佐賀県', '🎈', 'ar0941', 41, 33.2494, 130.2988, areaGroup: '九州・沖縄'),
+  nagasaki('長崎県', '⛪', 'ar0942', 42, 32.7448, 129.8738, areaGroup: '九州・沖縄'),
+  kumamoto('熊本県', '🐻', 'ar0943', 43, 32.7898, 130.7417, areaGroup: '九州・沖縄'),
+  oita('大分県', '♨️', 'ar0944', 44, 33.2382, 131.6126, areaGroup: '九州・沖縄'),
+  miyazaki('宮崎県', '🌴', 'ar0945', 45, 31.9111, 131.4239, areaGroup: '九州・沖縄'),
+  kagoshima('鹿児島県', '🌋', 'ar0946', 46, 31.5602, 130.5581, areaGroup: '九州・沖縄'),
+  okinawa('沖縄県', '🌺', 'ar1047', 47, 26.2124, 127.6809, areaGroup: '九州・沖縄');
 
   final String label;
   final String icon;
@@ -15,6 +70,7 @@ enum TohokuRegion {
   final int ikoyoPrefectureId;
   final double centerLat;
   final double centerLng;
+  final String areaGroup;
 
   const TohokuRegion(
     this.label,
@@ -22,8 +78,59 @@ enum TohokuRegion {
     this.walkerplusCode,
     this.ikoyoPrefectureId,
     this.centerLat,
-    this.centerLng,
-  );
+    this.centerLng, {
+    this.areaGroup = '東北',
+  });
+
+  /// 初期表示の東北6県セット
+  static const List<TohokuRegion> defaultTohokuRegions = [
+    miyagi,
+    yamagata,
+    iwate,
+    fukushima,
+    akita,
+    aomori,
+  ];
+
+  /// 地方区分一覧
+  static const List<String> allAreaGroups = [
+    '北海道',
+    '東北',
+    '関東',
+    '中部・北陸',
+    '関西',
+    '中国・四国',
+    '九州・沖縄',
+  ];
+
+  /// 指定地方に属する都道府県一覧
+  static List<TohokuRegion> regionsByGroup(String group) =>
+      values.where((r) => r.areaGroup == group).toList();
+
+  /// enum名（例: 'miyagi', 'tokyo'）から復元
+  static TohokuRegion? fromKey(String key) {
+    for (final r in values) {
+      if (r.name == key) return r;
+    }
+    return null;
+  }
+
+  /// 指定座標（現在地GPS等）に最も近い都道府県を返す
+  static TohokuRegion nearestTo(double lat, double lng) {
+    TohokuRegion best = miyagi;
+    double bestScore = double.infinity;
+    final cosLat = math.cos(lat * math.pi / 180.0);
+    for (final region in values) {
+      final dLat = region.centerLat - lat;
+      final dLng = (region.centerLng - lng) * cosLat;
+      final score = dLat * dLat + dLng * dLng;
+      if (score < bestScore) {
+        bestScore = score;
+        best = region;
+      }
+    }
+    return best;
+  }
 }
 
 /// スポットのジャンル（ユーザー指定の優先順）
@@ -93,12 +200,13 @@ enum SpotTag {
   }
 }
 
-/// 誰が「行きたい！」に追加したか（自分用・夫婦・パートナー共有用）
+/// 誰が「行きたい！」に追加したか（夫婦・パートナー共有用 / Web版はme）
+/// ※既存データ(index保存)との後方互換性維持のため、husband/wife/bothの順を変更しないこと
 enum PartnerPick {
-  me('自分のお気に入り', '❤️'),
   husband('夫が気になる', '🙋‍♂️'),
   wife('妻が気になる', '🙋‍♀️'),
-  both('2人とも行きたい！', '💑');
+  both('2人とも行きたい！', '💑'),
+  me('自分のお気に入り', '❤️');
 
   final String label;
   final String icon;
@@ -506,6 +614,9 @@ class OutingSpot {
   /// 💮 行ったときの思い出ひとことメモ
   final String visitedMemory;
 
+  /// 📸 行ったときの思い出写真（圧縮済みBase64 Data URIまたはURL、最大4枚）
+  final List<String> visitedPhotos;
+
   /// ⭐ Googleマップの星評価（例: 4.3）
   final double? googleRating;
 
@@ -540,6 +651,7 @@ class OutingSpot {
     this.visitedDate = '',
     this.visitedRating = 5,
     this.visitedMemory = '',
+    this.visitedPhotos = const [],
     this.googleRating,
     this.googleRatingCount,
     this.googleReviews = const [],
@@ -750,6 +862,7 @@ class OutingSpot {
     String? visitedDate,
     int? visitedRating,
     String? visitedMemory,
+    List<String>? visitedPhotos,
     double? googleRating,
     int? googleRatingCount,
     List<String>? googleReviews,
@@ -779,6 +892,7 @@ class OutingSpot {
       visitedDate: visitedDate ?? this.visitedDate,
       visitedRating: visitedRating ?? this.visitedRating,
       visitedMemory: visitedMemory ?? this.visitedMemory,
+      visitedPhotos: visitedPhotos ?? this.visitedPhotos,
       googleRating: googleRating ?? this.googleRating,
       googleRatingCount: googleRatingCount ?? this.googleRatingCount,
       googleReviews: googleReviews ?? this.googleReviews,
@@ -805,6 +919,7 @@ class OutingSpot {
       'visitedDate': visitedDate,
       'visitedRating': visitedRating,
       'visitedMemory': visitedMemory,
+      if (visitedPhotos.isNotEmpty) 'visitedPhotos': visitedPhotos,
       if (url.isNotEmpty) 'url': url,
     };
   }
@@ -835,6 +950,7 @@ class OutingSpot {
       'visitedDate': visitedDate,
       'visitedRating': visitedRating,
       'visitedMemory': visitedMemory,
+      if (visitedPhotos.isNotEmpty) 'visitedPhotos': visitedPhotos,
       if (googleRating != null) 'googleRating': googleRating,
       if (googleRatingCount != null) 'googleRatingCount': googleRatingCount,
       if (googleReviews.isNotEmpty) 'googleReviews': googleReviews,
@@ -864,6 +980,9 @@ class OutingSpot {
     final rawReviews = json['googleReviews'] as List<dynamic>? ?? [];
     final reviews = rawReviews.map((r) => r.toString()).toList();
 
+    final rawPhotos = json['visitedPhotos'] as List<dynamic>? ?? [];
+    final photos = rawPhotos.map((p) => p.toString()).where((p) => p.isNotEmpty).toList();
+
     return OutingSpot(
       id: json['id'] as String? ?? '',
       title: json['title'] as String? ?? '',
@@ -889,6 +1008,7 @@ class OutingSpot {
       visitedDate: json['visitedDate'] as String? ?? '',
       visitedRating: (json['visitedRating'] as num?)?.toInt() ?? 5,
       visitedMemory: json['visitedMemory'] as String? ?? '',
+      visitedPhotos: photos,
       googleRating: (json['googleRating'] as num?)?.toDouble(),
       googleRatingCount: (json['googleRatingCount'] as num?)?.toInt(),
       googleReviews: reviews,

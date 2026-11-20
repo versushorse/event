@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/outing_spot.dart';
 import '../services/gemini_service.dart';
 import '../services/monetization_service.dart';
+import '../widgets/safe_chips.dart';
 
 class TripPlannerScreen extends StatefulWidget {
   final List<TripPlan> tripPlans;
@@ -160,12 +161,12 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                 spacing: 6,
                 runSpacing: 6,
                 children: [
-                  ActionChip(
+                  SafeActionChip(
                     avatar: const Icon(Icons.add, size: 16),
                     label: const Text('新しいしおり', style: TextStyle(fontSize: 12)),
                     onPressed: () => _showCreateNewPlanDialog(context),
                   ),
-                  ActionChip(
+                  SafeActionChip(
                     avatar: _isGeneratingAi
                         ? const SizedBox(
                             width: 14,
@@ -183,7 +184,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                         ? null
                         : () => _showAiGeneratorSheet(context),
                   ),
-                  ActionChip(
+                  SafeActionChip(
                     avatar: const Text('🌲'),
                     label: const Text('TimeTree・カレンダー連携',
                         style: TextStyle(
@@ -192,7 +193,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                     onPressed: () =>
                         _showCalendarAndTimeTreeSheet(context, plan, activeDay),
                   ),
-                  ActionChip(
+                  SafeActionChip(
                     avatar: const Icon(Icons.share, size: 15),
                     label: const Text('LINE共有コピー',
                         style: TextStyle(fontSize: 12)),
@@ -233,7 +234,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                         ),
                       ),
                     ),
-                    ActionChip(
+                    SafeActionChip(
                       avatar: const Text('🏨', style: TextStyle(fontSize: 12)),
                       label: const Text('じゃらんで宿を探す',
                           style: TextStyle(fontSize: 11.5)),
@@ -244,7 +245,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                       ),
                     ),
                     const SizedBox(width: 6),
-                    ActionChip(
+                    SafeActionChip(
                       avatar: const Text('🎟️', style: TextStyle(fontSize: 12)),
                       label: const Text('アソビューで割引体験',
                           style: TextStyle(fontSize: 11.5)),
@@ -255,7 +256,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                       ),
                     ),
                     const SizedBox(width: 6),
-                    ActionChip(
+                    SafeActionChip(
                       avatar: const Text('🛎️', style: TextStyle(fontSize: 12)),
                       label: const Text('楽天トラベル',
                           style: TextStyle(fontSize: 11.5)),
@@ -285,7 +286,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                       for (int d = 1; d <= plan.totalDays; d++)
                         Padding(
                           padding: const EdgeInsets.only(right: 6),
-                          child: ChoiceChip(
+                          child: SafeChoiceChip(
                             label: Text(
                               'Day $d (${plan.items.where((i) => i.dayNumber == d).length})',
                               style: TextStyle(
@@ -299,7 +300,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                                 setState(() => _selectedDay = d),
                           ),
                         ),
-                      ActionChip(
+                      SafeActionChip(
                         avatar: const Icon(Icons.add, size: 15),
                         label: const Text('日数を追加',
                             style: TextStyle(fontSize: 11.5)),
@@ -659,7 +660,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                       runSpacing: 6,
                       children: TripItemType.values.map((t) {
                         final isSel = selectedType == t;
-                        return ChoiceChip(
+                        return SafeChoiceChip(
                           label: Text('${t.icon} ${t.label}',
                               style: const TextStyle(fontSize: 11.5)),
                           selected: isSel,
@@ -1023,7 +1024,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                     spacing: 6,
                     runSpacing: 6,
                     children: [
-                      ActionChip(
+                      SafeActionChip(
                         label: const Text('🏯 大阪＆名古屋 3日間',
                             style: TextStyle(fontSize: 11.5)),
                         onPressed: () {
@@ -1032,7 +1033,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                           setSheetState(() => days = 3);
                         },
                       ),
-                      ActionChip(
+                      SafeActionChip(
                         label: const Text('🎡 大阪満喫 2日間（USJ＆海遊館）',
                             style: TextStyle(fontSize: 11.5)),
                         onPressed: () {
@@ -1041,7 +1042,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                           setSheetState(() => days = 2);
                         },
                       ),
-                      ActionChip(
+                      SafeActionChip(
                         label: const Text('🏰 名古屋満喫 2日間（ジブリ＆レゴランド）',
                             style: TextStyle(fontSize: 11.5)),
                         onPressed: () {

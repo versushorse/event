@@ -1,4 +1,5 @@
 // アプリ全体の基本動作・東北地域タブ・直近週末計算を確認するテスト
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:weekend_outing/main.dart';
@@ -7,6 +8,8 @@ import 'package:weekend_outing/services/gemini_service.dart';
 import 'package:weekend_outing/services/location_service.dart';
 import 'package:weekend_outing/services/monetization_service.dart';
 import 'package:weekend_outing/services/sync_service.dart';
+import 'package:weekend_outing/widgets/safe_chips.dart';
+import 'package:weekend_outing/widgets/visited_memory_widgets.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -30,6 +33,10 @@ void main() {
     expect(find.text('大きな公園（小学生）'), findsWidgets);
     expect(find.text('温泉・日帰り銭湯'), findsWidgets);
 
+    // 現在地ボタン（左端）と地域変更ボタン（右端）が表示されていることを確認
+    expect(find.text('現在地'), findsOneWidget);
+    expect(find.text('地域変更'), findsOneWidget);
+
     // 期間限定イベントのスクレイピングを終了し、Google検索ショートカットへ移行していることを確認
     expect(find.text('期間限定イベント'), findsNothing);
     expect(find.text('Googleで宮城県のイベント検索'), findsOneWidget);
@@ -37,10 +44,13 @@ void main() {
     // 下部広告バナー枠の非表示リンク（プレミアム案内）が表示されていることを確認
     expect(find.text('広告非表示'), findsOneWidget);
 
+    // 夫婦の好みAIナビが表示されていることを確認（非Web＝Android版）
+    expect(find.text('夫婦の好みAIナビ'), findsOneWidget);
+
     // 下部ナビゲーションのタブが表示されていることを確認
     expect(find.text('AI提案・検索'), findsOneWidget);
     expect(find.text('ドライブ地図'), findsOneWidget);
-    expect(find.text('行きたい！リスト'), findsOneWidget);
+    expect(find.text('夫婦の行きたい！'), findsOneWidget);
     expect(find.text('旅のしおり'), findsOneWidget);
   });
 
@@ -287,5 +297,184 @@ void main() {
       AffiliateLinkBuilder.buildAmazonGoodsUrl('レジャーシート'),
       contains('amazon.co.jp'),
     );
+  });
+
+  test('全国47都道府県カスタム地域定義と最寄り都道府県判定（nearestTo）のテスト', () {
+    expect(TohokuRegion.values.length, 47);
+    expect(TohokuRegion.defaultTohokuRegions.length, 6);
+    expect(TohokuRegion.allAreaGroups.length, 7);
+
+    expect(TohokuRegion.fromKey('tokyo'), TohokuRegion.tokyo);
+    expect(TohokuRegion.fromKey('unknown_key'), isNull);
+
+    // 東京駅付近 -> 東京都
+    expect(TohokuRegion.nearestTo(35.6812, 139.7671), TohokuRegion.tokyo);
+    // 仙台市中心部 -> 宮城県
+    expect(TohokuRegion.nearestTo(38.2682, 140.8694), TohokuRegion.miyagi);
+    // 大阪市付近 -> 大阪府
+    expect(TohokuRegion.nearestTo(34.6937, 135.5023), TohokuRegion.osaka);
+  });
+
+  test('夫婦お気に入りの安全マージ同期（片方の上書きで相手が消えない＆2人とも昇格）テスト', () {
+    final samples = GeminiOutingService.getInitialSpots();
+    final spotA = samples[0].copyWith(isFavorite: true, pickedBy: PartnerPick.husband);
+    final spotB = samples[1].copyWith(isFavorite: true, pickedBy: PartnerPick.wife);
+    final spotCHusband = samples[2].copyWith(isFavorite: true, pickedBy: PartnerPick.husband);
+    final spotCWife = samples[2].copyWith(isFavorite: true, pickedBy: PartnerPick.wife);
+
+    // 1. 夫(ローカル)がAとCを持ち、妻(クラウド)がBとCだけを上書きした状態でもAが消えず、Cはbothになる
+    final merged = CoupleSyncService.mergeSpotsForTesting(
+      localSpots: [spotA, spotCHusband],
+      localUpdated: {spotA.id: 1000, spotCHusband.id: 1000},
+      cloudSpots: [spotB, spotCWife],
+      cloudTimestamp: 2000,
+      cloudUpdated: {spotB.id: 2000, spotCWife.id: 2000},
+    );
+
+    expect(merged.length, 3);
+    expect(merged.any((s) => s.id == spotA.id), isTrue);
+    expect(merged.any((s) => s.id == spotB.id), isTrue);
+    final mergedC = merged.firstWhere((s) => s.id == spotCHusband.id);
+    expect(mergedC.pickedBy, PartnerPick.both);
+
+    // 2. 相手が明示的にspotAを削除（削除ログ時刻 > ローカル更新時刻）したときは削除される
+    final mergedAfterDelete = CoupleSyncService.mergeSpotsForTesting(
+      localSpots: [spotA],
+      localUpdated: {spotA.id: 1000},
+      cloudSpots: [spotB],
+      cloudTimestamp: 3000,
+      cloudUpdated: {spotB.id: 2000},
+      cloudDeleted: {spotA.id: 3000},
+    );
+    expect(mergedAfterDelete.any((s) => s.id == spotA.id), isFalse);
+    expect(mergedAfterDelete.any((s) => s.id == spotB.id), isTrue);
+  });
+
+  test('PartnerPickのindex後方互換（husband=0, wife=1, both=2）確認テスト', () {
+    expect(PartnerPick.husband.index, 0);
+    expect(PartnerPick.wife.index, 1);
+    expect(PartnerPick.both.index, 2);
+  });
+
+  testWidgets('SafeChip群が文字切れせず完全ラベル表示＆タップ応答できるテスト',
+      (WidgetTester tester) async {
+    bool selected = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    SafeChoiceChip(
+                      avatar: const Text('🎪'),
+                      label: const Text('期間限定イベント'),
+                      selected: selected,
+                      onSelected: (v) => setState(() => selected = v),
+                    ),
+                    SafeActionChip(
+                      label: const Text('🍽️ 周辺の食事処・ランチ'),
+                      onPressed: () {},
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('期間限定イベント'), findsOneWidget);
+    expect(find.text('🍽️ 周辺の食事処・ランチ'), findsOneWidget);
+    await tester.tap(find.text('期間限定イベント'));
+    await tester.pumpAndSettle();
+    expect(selected, isTrue);
+  });
+
+  test('思い出写真（visitedPhotos）のJSON保存・同期マージ・共有テキストテスト', () {
+    const samplePhoto =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    final baseSpot = GeminiOutingService.getInitialSpots().first;
+    final spotWithPhoto = baseSpot.copyWith(
+      isFavorite: true,
+      isVisited: true,
+      visitedDate: '2026/11/10',
+      visitedMemory: '素敵な景色でした',
+      visitedPhotos: const [samplePhoto],
+    );
+
+    final restoredFromJson = OutingSpot.fromJson(spotWithPhoto.toJson());
+    expect(restoredFromJson.visitedPhotos, [samplePhoto]);
+
+    final restoredFromSync = OutingSpot.fromJson(spotWithPhoto.toSyncJson());
+    expect(restoredFromSync.visitedPhotos, [samplePhoto]);
+
+    // クラウド側が写真未対応フォーマット等で空写真配列を送ってきた場合でもローカル写真を保護
+    final merged = CoupleSyncService.mergeSpotsForTesting(
+      localSpots: [spotWithPhoto],
+      localUpdated: {spotWithPhoto.id: 1000},
+      cloudSpots: [
+        baseSpot.copyWith(isFavorite: true, isVisited: true, visitedPhotos: const []),
+      ],
+      cloudTimestamp: 2000,
+      cloudUpdated: {spotWithPhoto.id: 2000},
+    );
+    expect(merged.first.visitedPhotos, [samplePhoto]);
+
+    final shareText = CoupleSyncService.exportFavoritesShareText([spotWithPhoto], 'test-room');
+    expect(shareText.contains('思い出写真: 1枚'), isTrue);
+  });
+
+  testWidgets('VisitedMemoryBoxと写真添付スタンプ編集ダイアログの表示・保存テスト',
+      (WidgetTester tester) async {
+    const samplePhoto =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    final spot = GeminiOutingService.getInitialSpots().first.copyWith(
+      isFavorite: true,
+      isVisited: true,
+      visitedDate: '2026/11/10',
+      visitedMemory: '楽しかった！',
+      visitedPhotos: const [samplePhoto],
+    );
+    OutingSpot? savedSpot;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) {
+              return VisitedMemoryBox(
+                spot: spot,
+                onEditTap: () {
+                  showVisitedStampEditorDialog(
+                    context: context,
+                    spot: spot,
+                    onSave: (updated) => savedSpot = updated,
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('楽しかった！'), findsOneWidget);
+    expect(find.byType(Image), findsOneWidget);
+
+    await tester.tap(find.text('編集'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('思い出写真'), findsOneWidget);
+    expect(find.text('アルバムから追加'), findsOneWidget);
+
+    await tester.tap(find.text('保存する'));
+    await tester.pumpAndSettle();
+
+    expect(savedSpot, isNotNull);
+    expect(savedSpot!.visitedPhotos, [samplePhoto]);
   });
 }
