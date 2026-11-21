@@ -20,6 +20,10 @@ class AiSearchResult {
 }
 
 class GeminiOutingService {
+  /// 商用版ではセキュリティ保護とアップデート余白のためGemini API連携を無効化する
+  static const bool enableGeminiAi = false;
+  static String get _effectiveGeminiApiKey => '';
+
   static const List<String> _weekdayNames = ['', '月', '火', '水', '木', '金', '土', '日'];
 
   /// 基準日（省略時は今日）から見て「直近の週末（土曜日〜日曜日）」の日付範囲を返す
@@ -420,7 +424,7 @@ class GeminiOutingService {
     double? searchCenterLng,
     String? mapCenterLabel,
   }) async {
-    final apiKey = AppApiKeys.geminiApiKey.trim();
+    final apiKey = _effectiveGeminiApiKey;
     final mapsKey = AppApiKeys.googleMapsApiKey.trim();
     final cleanQuery = query.replaceAll(RegExp(r'[🎪🍠🍽️📸🏃♨️🏛️🌳⛩️🍔👶👦☔✨📍🚗🍎⛰️🌾🍒🍑]'), '').trim();
 
@@ -1432,7 +1436,7 @@ $spotSummaries
       );
     }
 
-    final apiKey = AppApiKeys.geminiApiKey.trim();
+    final apiKey = _effectiveGeminiApiKey;
     if (apiKey.isEmpty || apiKey == 'YOUR_GEMINI_API_KEY') {
       return _generateLocalPreferenceInsight(favorites, currentRegion);
     }
@@ -2123,7 +2127,7 @@ $candidateListText
         ? '大阪・名古屋 家族旅行'
         : destinationAndTheme.trim();
     final days = totalDays.clamp(1, 5);
-    final apiKey = AppApiKeys.geminiApiKey.trim();
+    final apiKey = _effectiveGeminiApiKey;
 
     if (apiKey.isNotEmpty && apiKey != 'YOUR_GEMINI_API_KEY') {
       final prompt = '''

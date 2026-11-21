@@ -1,4 +1,5 @@
 // 商用版：サブスク（Free/Premium）・AdMob広告枠・アフィリエイト連携・検索回数クォータ管理サービス
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/shift_jis_encoder.dart';
 
@@ -18,12 +19,41 @@ class AffiliateConfig {
   static const String amazonAssociateTag = 'weekendouting-22';
 }
 
-/// Google AdMob 本番移行用ユニットID設定（テストIDを初期設定）
+/// Google AdMob ユニットID設定
+/// デバッグビルド時はポリシー違反防止のためGoogle公式テストIDを自動使用し、リリースビルド時のみ本番IDを使用する
 class AdMobConfig {
-  static const String androidBannerUnitId = 'ca-app-pub-3940256099942544/6300978111';
-  static const String iosBannerUnitId = 'ca-app-pub-3940256099942544/2934735716';
-  static const String androidRewardedUnitId = 'ca-app-pub-3940256099942544/5224354917';
-  static const String iosRewardedUnitId = 'ca-app-pub-3940256099942544/1712485313';
+  static const String androidAppId = 'ca-app-pub-7797196962987525~6755055468';
+
+  static const String testAndroidBannerUnitId =
+      'ca-app-pub-3940256099942544/6300978111';
+  static const String prodAndroidBannerUnitId =
+      'ca-app-pub-7797196962987525/8082121565';
+
+  static const String testAndroidRewardedUnitId =
+      'ca-app-pub-3940256099942544/5224354917';
+  static const String prodAndroidRewardedUnitId =
+      'ca-app-pub-7797196962987525/1502728788';
+
+  static const String iosBannerUnitId =
+      'ca-app-pub-3940256099942544/2934735716';
+  static const String iosRewardedUnitId =
+      'ca-app-pub-3940256099942544/1712485313';
+
+  static String get androidBannerUnitId =>
+      kDebugMode ? testAndroidBannerUnitId : prodAndroidBannerUnitId;
+
+  static String get androidRewardedUnitId =>
+      kDebugMode ? testAndroidRewardedUnitId : prodAndroidRewardedUnitId;
+
+  static String get currentBannerUnitId =>
+      defaultTargetPlatform == TargetPlatform.iOS
+          ? iosBannerUnitId
+          : androidBannerUnitId;
+
+  static String get currentRewardedUnitId =>
+      defaultTargetPlatform == TargetPlatform.iOS
+          ? iosRewardedUnitId
+          : androidRewardedUnitId;
 }
 
 /// 提携アフィリエイト・Google検索リンク生成ヘルパー

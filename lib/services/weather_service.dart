@@ -9,21 +9,35 @@ class DailyWeather {
   final DateTime date;
   final String weatherCodeLabel;
   final String weatherIcon;
-  final double maxTemp;
-  final double minTemp;
+  final double? maxTemp;
+  final double? minTemp;
   final int rainProbability;
 
   const DailyWeather({
     required this.date,
     required this.weatherCodeLabel,
     required this.weatherIcon,
-    required this.maxTemp,
-    required this.minTemp,
+    this.maxTemp,
+    this.minTemp,
     required this.rainProbability,
   });
 
-  String get shortLabel =>
-      '$weatherIcon $weatherCodeLabel ${maxTemp.round()}℃/${minTemp.round()}℃ (雨$rainProbability%)';
+  String get tempLabel {
+    if (maxTemp != null && minTemp != null) {
+      return '${maxTemp!.round()}℃/${minTemp!.round()}℃';
+    }
+    if (maxTemp != null) {
+      return '最高${maxTemp!.round()}℃';
+    }
+    if (minTemp != null) {
+      return '最低${minTemp!.round()}℃';
+    }
+    return '';
+  }
+
+  String get shortLabel => tempLabel.isNotEmpty
+      ? '$weatherIcon $weatherCodeLabel $tempLabel (雨$rainProbability%)'
+      : '$weatherIcon $weatherCodeLabel (雨$rainProbability%)';
 
   bool get isRainy => rainProbability >= 50 || weatherCodeLabel.contains('雨') || weatherCodeLabel.contains('雪');
 }
@@ -136,10 +150,11 @@ class WeatherService {
         }
       }
 
-      // 2. 短期3日間予報（decoded[0]）で今日・明日のコードを補完
+      // 2. 短期3日間予報（decoded[0]）の最新の天気・降水確率・気温で今日・明日・明後日を上書き優先する
       if (decoded[0] is Map<String, dynamic>) {
         final shortTerm = decoded[0] as Map<String, dynamic>;
         final tsList = shortTerm['timeSeries'] as List<dynamic>? ?? [];
+        // 2-1. 天気コード
         if (tsList.isNotEmpty && tsList[0] is Map<String, dynamic>) {
           final ts0 = tsList[0] as Map<String, dynamic>;
           final times = ts0['timeDefines'] as List<dynamic>? ?? [];
@@ -149,10 +164,68 @@ class WeatherService {
             final codes = area0['weatherCodes'] as List<dynamic>? ?? [];
             for (var i = 0; i < times.length; i++) {
               final dateKey = _dateKeyFromIso(times[i].toString());
-              if (dateKey == null || codeByDate.containsKey(dateKey)) continue;
+              if (dateKey == null) continue;
               if (i < codes.length) {
                 final c = codes[i].toString().trim();
                 if (c.isNotEmpty) codeByDate[dateKey] = c;
+              }
+            }
+          }
+        }
+        // 2-2. 6時間ごとの降水確率（各日の最大値を採用）
+        if (tsList.length > 1 && tsList[1] is Map<String, dynamic>) {
+          final ts1 = tsList[1] as Map<String, dynamic>;
+          final times = ts1['timeDefines'] as List<dynamic>? ?? [];
+          final areas = ts1['areas'] as List<dynamic>? ?? [];
+          if (areas.isNotEmpty && areas[0] is Map<String, dynamic>) {
+            final area0 = areas[0] as Map<String, dynamic>;
+            final pops = area0['pops'] as List<dynamic>? ?? [];
+            final shortPopMaxByDate = <String, int>{};
+            for (var i = 0; i < times.length; i++) {
+              final dateKey = _dateKeyFromIso(times[i].toString());
+              if (dateKey == null || i >= pops.length) continue;
+              final p = int.tryParse(pops[i].toString().trim());
+              if (p == null) continue;
+              final prev = shortPopMaxByDate[dateKey];
+              if (prev == null || p > prev) {
+                shortPopMaxByDate[dateKey] = p;
+              }
+            }
+            popByDate.addAll(shortPopMaxByDate);
+          }
+        }
+        // 2-3. 気温（T09: 最高気温 / T00: 最低気温。朝・昼発表で当日最低が省略されて最高と同値の場合はminを設定しない）
+        if (tsList.length > 2 && tsList[2] is Map<String, dynamic>) {
+          final ts2 = tsList[2] as Map<String, dynamic>;
+          final times = ts2['timeDefines'] as List<dynamic>? ?? [];
+          final areas = ts2['areas'] as List<dynamic>? ?? [];
+          if (areas.isNotEmpty && areas[0] is Map<String, dynamic>) {
+            final area0 = areas[0] as Map<String, dynamic>;
+            final temps = area0['temps'] as List<dynamic>? ?? [];
+            final shortMaxByDate = <String, double>{};
+            final shortMinByDate = <String, double>{};
+            for (var i = 0; i < times.length; i++) {
+              final timeStr = times[i].toString();
+              final dateKey = _dateKeyFromIso(timeStr);
+              if (dateKey == null || i >= temps.length) continue;
+              final val = double.tryParse(temps[i].toString().trim());
+              if (val == null) continue;
+              if (timeStr.contains('T09:')) {
+                shortMaxByDate[dateKey] = val;
+              } else if (timeStr.contains('T00:')) {
+                shortMinByDate[dateKey] = val;
+              }
+            }
+            for (final dateKey in {...shortMaxByDate.keys, ...shortMinByDate.keys}) {
+              final mx = shortMaxByDate[dateKey];
+              final mn = shortMinByDate[dateKey];
+              if (mx != null) {
+                maxByDate[dateKey] = mx;
+              }
+              if (mn != null && (mx == null || mn != mx)) {
+                minByDate[dateKey] = mn;
+              } else if (mx != null && mn == mx) {
+                minByDate.remove(dateKey);
               }
             }
           }
@@ -184,8 +257,8 @@ class WeatherService {
               date: dt,
               weatherCodeLabel: info.label,
               weatherIcon: info.icon,
-              maxTemp: maxByDate[dateKey] ?? 15.0,
-              minTemp: minByDate[dateKey] ?? 7.0,
+              maxTemp: maxByDate[dateKey],
+              minTemp: minByDate[dateKey],
               rainProbability: popByDate[dateKey] ?? (info.isRainyDefault ? 60 : 20),
             ),
           );
@@ -203,8 +276,8 @@ class WeatherService {
               date: dt,
               weatherCodeLabel: info.label,
               weatherIcon: info.icon,
-              maxTemp: maxByDate[dateKey] ?? 15.0,
-              minTemp: minByDate[dateKey] ?? 7.0,
+              maxTemp: maxByDate[dateKey],
+              minTemp: minByDate[dateKey],
               rainProbability: popByDate[dateKey] ?? (info.isRainyDefault ? 60 : 20),
             ),
           );

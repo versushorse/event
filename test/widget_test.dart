@@ -50,8 +50,8 @@ void main() {
     // 下部広告バナー枠の非表示リンク（プレミアム案内）が表示されていることを確認
     expect(find.text('広告非表示'), findsOneWidget);
 
-    // 夫婦の好みAIナビが表示されていることを確認（非Web＝Android版）
-    expect(find.text('夫婦の好みAIナビ'), findsOneWidget);
+    // 商用版ではセキュリティ対策とアップデート余白のため、夫婦の好みAIナビ（Gemini）は無効化されていることを確認
+    expect(find.text('夫婦の好みAIナビ'), findsNothing);
 
     // 下部ナビゲーションのタブが表示されていることを確認
     expect(find.text('AI提案・検索'), findsOneWidget);

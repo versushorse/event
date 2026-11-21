@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../config/api_keys.local.dart';
 import '../models/outing_spot.dart';
 import '../services/gemini_service.dart';
 import '../services/location_service.dart';
@@ -2827,8 +2826,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                // 夫婦の好みAIナビ（Gemini 3.5 Flash-Lite）カード
-                if (AppApiKeys.geminiApiKey.isNotEmpty) ...[
+                // 夫婦の好みAIナビ（将来のアップデート余白用・現在無効）
+                if (GeminiOutingService.enableGeminiAi) ...[
                   _buildCoupleAiInsightCard(context),
                   const SizedBox(height: 8),
                 ],
@@ -3756,7 +3755,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       const Text('🌤️ ', style: TextStyle(fontSize: 13)),
                       Text(
-                        '${_currentRegionWeather!.areaName}の週末天気: ${_currentRegionWeather!.dailyForecasts.map((d) => "${d.weatherIcon} ${d.maxTemp.round()}℃/${d.minTemp.round()}℃").join(" ｜ ")}',
+                        '${_currentRegionWeather!.areaName}の週末天気: ${_currentRegionWeather!.dailyForecasts.map((d) => "${d.weatherIcon}${d.tempLabel.isNotEmpty ? ' ${d.tempLabel}' : ''}").join(" ｜ ")}',
                         style: const TextStyle(
                             fontSize: 11, fontWeight: FontWeight.bold),
                       ),

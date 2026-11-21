@@ -1,11 +1,22 @@
 // 商用版UIウィジェット：バナー広告枠・インフィードネイティブPR枠・リワード動画回復・プレミアムプランシート
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import '../services/monetization_service.dart';
 
+/// AdMobネイティブ広告が動作するモバイル実環境か判定する（Web・Widgetテスト時はfalse）
+bool _isAdMobSupportedPlatform() {
+  final isTestBinding =
+      WidgetsBinding.instance.runtimeType.toString().contains('Test');
+  if (kIsWeb || isTestBinding) return false;
+  return defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+}
+
 /// 画面下部のバナー広告枠（プレミアム会員時は非表示）
-/// ※ 本番公開時は google_mobile_ads の AdWidget(ad: bannerAd) に差し替えてご利用ください
-class AdBannerBar extends StatelessWidget {
+/// モバイル実環境では google_mobile_ads の BannerAd を読み込み、未読込時やWeb/テスト時はPR枠を表示する
+class AdBannerBar extends StatefulWidget {
   final VoidCallback onOpenPremium;
   final ValueChanged<String> onOpenAffiliateUrl;
 
@@ -16,7 +27,78 @@ class AdBannerBar extends StatelessWidget {
   });
 
   @override
+  State<AdBannerBar> createState() => _AdBannerBarState();
+}
+
+class _AdBannerBarState extends State<AdBannerBar> {
+  BannerAd? _bannerAd;
+  bool _isAdLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBannerAd();
+  }
+
+  void _loadBannerAd() {
+    if (!_isAdMobSupportedPlatform()) return;
+    final banner = BannerAd(
+      size: AdSize.banner,
+      adUnitId: AdMobConfig.currentBannerUnitId,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          if (!mounted) {
+            ad.dispose();
+            return;
+          }
+          setState(() {
+            _isAdLoaded = true;
+          });
+        },
+        onAdFailedToLoad: (ad, error) {
+          ad.dispose();
+          if (mounted) {
+            setState(() {
+              _bannerAd = null;
+              _isAdLoaded = false;
+            });
+          }
+        },
+      ),
+    );
+    _bannerAd = banner;
+    banner.load();
+  }
+
+  @override
+  void dispose() {
+    _bannerAd?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // 広告読み込み完了時はAdMobポリシー遵守のため、広告の上にボタンを重ねず純粋にAdWidgetを表示する
+    if (_isAdLoaded && _bannerAd != null) {
+      return Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          border: Border(
+            top: BorderSide(color: Colors.grey.shade300),
+          ),
+        ),
+        child: Center(
+          child: SizedBox(
+            width: _bannerAd!.size.width.toDouble(),
+            height: _bannerAd!.size.height.toDouble(),
+            child: AdWidget(ad: _bannerAd!),
+          ),
+        ),
+      );
+    }
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -46,7 +128,7 @@ class AdBannerBar extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: InkWell(
-              onTap: () => onOpenAffiliateUrl(
+              onTap: () => widget.onOpenAffiliateUrl(
                 AffiliateLinkBuilder.buildAsoviewUrl('家族 レジャー 割引'),
               ),
               child: const Column(
@@ -64,7 +146,7 @@ class AdBannerBar extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    '広告枠（AdMob Banner: ${AdMobConfig.androidBannerUnitId}）',
+                    'お出かけチケット・宿の割引情報をチェック',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 10, color: Colors.black54),
@@ -75,7 +157,7 @@ class AdBannerBar extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           TextButton(
-            onPressed: onOpenPremium,
+            onPressed: widget.onOpenPremium,
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               minimumSize: Size.zero,
@@ -216,35 +298,160 @@ Future<void> showSearchQuotaExceededDialog(
   required VoidCallback onRewardCompleted,
   required VoidCallback onOpenPremium,
 }) async {
+  Timer? timer;
+  bool isDialogClosed = false;
+
   await showDialog<void>(
     context: context,
     builder: (dialogCtx) {
+      bool isLoadingAd = false;
       bool isWatchingAd = false;
       int countdown = 3;
-      Timer? timer;
 
       return StatefulBuilder(
         builder: (context, setDialogState) {
           void startSimulatedRewardAd() {
-            // 本番移行時はここで google_mobile_ads の RewardedAd.show() を呼び出します
+            if (!dialogCtx.mounted || isDialogClosed) return;
             setDialogState(() {
+              isLoadingAd = false;
               isWatchingAd = true;
               countdown = 3;
             });
             timer?.cancel();
             timer = Timer.periodic(const Duration(seconds: 1), (t) {
-              if (!context.mounted) {
+              if (!dialogCtx.mounted || isDialogClosed) {
                 t.cancel();
                 return;
               }
               if (countdown <= 1) {
                 t.cancel();
-                Navigator.of(dialogCtx).pop();
                 onRewardCompleted();
+                if (dialogCtx.mounted) {
+                  Navigator.of(dialogCtx).pop();
+                }
               } else {
                 setDialogState(() => countdown--);
               }
             });
+          }
+
+          void startRewardAd() {
+            if (!_isAdMobSupportedPlatform()) {
+              startSimulatedRewardAd();
+              return;
+            }
+            setDialogState(() => isLoadingAd = true);
+            RewardedAd.load(
+              adUnitId: AdMobConfig.currentRewardedUnitId,
+              request: const AdRequest(),
+              rewardedAdLoadCallback: RewardedAdLoadCallback(
+                onAdLoaded: (RewardedAd ad) {
+                  if (isDialogClosed || !dialogCtx.mounted) {
+                    ad.dispose();
+                    return;
+                  }
+                  bool rewardEarned = false;
+                  bool adDismissed = false;
+                  bool rewardHandled = false;
+
+                  void finishRewardIfReady() {
+                    if (rewardHandled || !rewardEarned || !adDismissed) return;
+                    rewardHandled = true;
+                    onRewardCompleted();
+                    if (dialogCtx.mounted) {
+                      Navigator.of(dialogCtx).pop();
+                    }
+                  }
+
+                  ad.fullScreenContentCallback = FullScreenContentCallback(
+                    onAdDismissedFullScreenContent: (ad) {
+                      ad.dispose();
+                      adDismissed = true;
+                      if (rewardEarned) {
+                        finishRewardIfReady();
+                      } else if (dialogCtx.mounted && !isDialogClosed) {
+                        setDialogState(() => isLoadingAd = false);
+                      }
+                    },
+                    onAdFailedToShowFullScreenContent: (ad, error) {
+                      ad.dispose();
+                      if (dialogCtx.mounted && !isDialogClosed) {
+                        startSimulatedRewardAd();
+                      }
+                    },
+                  );
+
+                  ad.show(
+                    onUserEarnedReward: (_, _) {
+                      rewardEarned = true;
+                      finishRewardIfReady();
+                    },
+                  );
+                },
+                onAdFailedToLoad: (LoadAdError error) {
+                  if (!dialogCtx.mounted || isDialogClosed) return;
+                  startSimulatedRewardAd();
+                },
+              ),
+            );
+          }
+
+          final Widget bodyContent;
+          if (isLoadingAd) {
+            bodyContent = const Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 14),
+                Text(
+                  '🎬 動画広告を読み込み中...',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            );
+          } else if (isWatchingAd) {
+            bodyContent = Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 14),
+                Text(
+                  '🎬 動画広告を再生中... あと $countdown 秒',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  '（再生完了後に検索回数が回復します）',
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey),
+                ),
+              ],
+            );
+          } else {
+            bodyContent = const Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'フリープランでは1日${MonetizationService.freeDailySearchLimit}回までGoogle最新スポット＆AI検索をご利用いただけます。',
+                  style: TextStyle(fontSize: 13, height: 1.45),
+                ),
+                SizedBox(height: 10),
+                Text(
+                  '• 🎬 短い動画広告を見ると +${MonetizationService.rewardRecoveryAmount}回 すぐ回復！\n'
+                  '• 👑 ファミリープレミアムなら検索無制限＆広告なし',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            );
           }
 
           return AlertDialog(
@@ -259,46 +466,8 @@ Future<void> showSearchQuotaExceededDialog(
                 ),
               ],
             ),
-            content: isWatchingAd
-                ? Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const CircularProgressIndicator(),
-                      const SizedBox(height: 14),
-                      Text(
-                        '🎬 動画広告を再生中... あと $countdown 秒',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      const Text(
-                        '（本番ビルドでは AdMob RewardedAd が表示されます）',
-                        style: TextStyle(fontSize: 11.5, color: Colors.grey),
-                      ),
-                    ],
-                  )
-                : const Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'フリープランでは1日${MonetizationService.freeDailySearchLimit}回までGoogle最新スポット＆AI検索をご利用いただけます。',
-                        style: TextStyle(fontSize: 13, height: 1.45),
-                      ),
-                      SizedBox(height: 10),
-                      Text(
-                        '• 🎬 短い動画広告を見ると +${MonetizationService.rewardRecoveryAmount}回 すぐ回復！\n'
-                        '• 👑 ファミリープレミアムなら検索無制限＆広告なし',
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-            actions: isWatchingAd
+            content: bodyContent,
+            actions: (isLoadingAd || isWatchingAd)
                 ? null
                 : [
                     TextButton(
@@ -314,7 +483,7 @@ Future<void> showSearchQuotaExceededDialog(
                       label: const Text('プレミアムを見る'),
                     ),
                     FilledButton.icon(
-                      onPressed: startSimulatedRewardAd,
+                      onPressed: startRewardAd,
                       icon: const Icon(Icons.play_circle_outline, size: 18),
                       label: const Text(
                         '広告で+${MonetizationService.rewardRecoveryAmount}回回復',
@@ -325,7 +494,10 @@ Future<void> showSearchQuotaExceededDialog(
         },
       );
     },
-  );
+  ).whenComplete(() {
+    isDialogClosed = true;
+    timer?.cancel();
+  });
 }
 
 /// ファミリープレミアム（サブスク）案内 ＆ テスト用プレビュー切替シート

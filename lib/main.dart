@@ -1,8 +1,23 @@
 // 週末お出かけ・イベント提案Androidアプリのエントリーポイント
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'screens/home_screen.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Web・テスト環境ではネイティブプラグイン呼び出しをスキップし、モバイル実機のみAdMobをバックグラウンド初期化する
+  final isTestBinding =
+      WidgetsBinding.instance.runtimeType.toString().contains('Test');
+  if (!kIsWeb &&
+      !isTestBinding &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS)) {
+    try {
+      unawaited(MobileAds.instance.initialize().then((_) {}, onError: (_) {}));
+    } catch (_) {}
+  }
   runApp(const WeekendOutingApp());
 }
 
