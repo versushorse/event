@@ -6,9 +6,7 @@ import 'package:weekend_outing_web/main.dart';
 import 'package:weekend_outing_web/models/outing_spot.dart';
 import 'package:weekend_outing_web/services/gemini_service.dart';
 import 'package:weekend_outing_web/services/location_service.dart';
-import 'package:weekend_outing_web/services/monetization_service.dart';
 import 'package:weekend_outing_web/services/sync_service.dart';
-import 'package:weekend_outing_web/utils/shift_jis_encoder.dart';
 import 'package:weekend_outing_web/widgets/safe_chips.dart';
 import 'package:weekend_outing_web/widgets/visited_memory_widgets.dart';
 
@@ -19,45 +17,29 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('週末お出かけナビ商用版のホーム画面・東北6県タブ・7大ジャンル・PR広告枠が表示されるかテスト',
+  testWidgets('週末お出かけナビのホーム画面・東北6県タブ・ジャンルボタンが表示されるかテスト',
       (WidgetTester tester) async {
     await tester.pumpWidget(const WeekendOutingApp());
     await tester.pumpAndSettle();
 
-    // アプリタイトルと東北地域タブ・Google Places主軸の常設ジャンルが表示されていることを確認
-    expect(find.text('おでかけナビ'), findsOneWidget);
+    // アプリタイトルと東北地域タブ・ジャンルボタンが表示されていることを確認
+    expect(find.text('週末どこ行く？AIナビ'), findsOneWidget);
     expect(find.text('宮城県'), findsWidgets);
     expect(find.text('山形県'), findsWidgets);
     expect(find.text('岩手県'), findsWidgets);
+    expect(find.text('期間限定イベント'), findsWidgets);
     expect(find.text('地元グルメ・食事処'), findsWidgets);
     expect(find.text('観光地・名所'), findsWidgets);
-    expect(find.text('大きな公園（小学生）'), findsWidgets);
-    expect(find.text('屋内スポット'), findsWidgets);
-    expect(find.text('小さな公園'), findsWidgets);
-    expect(find.text('ジャンル追加'), findsOneWidget);
-    // 初期表示から温泉・神社仏閣は除外されていることを確認（「ジャンル追加」から再ON可能）
-    expect(find.text('温泉・日帰り銭湯'), findsNothing);
-    expect(find.text('神社仏閣'), findsNothing);
+    expect(find.text('温泉・日帰り銭湯'), findsWidgets);
 
-    // 現在地ボタン（左端）と地域変更ボタン（右端）が表示されていることを確認
-    expect(find.text('現在地'), findsOneWidget);
-    expect(find.text('地域変更'), findsOneWidget);
-
-    // 期間限定イベントのスクレイピングを終了し、Google検索ショートカットへ移行していることを確認
-    expect(find.text('期間限定イベント'), findsNothing);
-    expect(find.text('Googleで宮城県のイベント検索'), findsOneWidget);
-
-    // 下部広告バナー枠の非表示リンク（プレミアム案内）が表示されていることを確認
-    expect(find.text('広告非表示'), findsOneWidget);
-
-    // Web版ではGemini APIキー非保持のため、夫婦の好みAIナビが非表示であることを確認
+    // Web版ではGemini好みAIナビカードが表示されないことを確認
     expect(find.text('夫婦の好みAIナビ'), findsNothing);
+    expect(find.text('お出かけ好みAIナビ'), findsNothing);
 
     // 下部ナビゲーションのタブが表示されていることを確認
     expect(find.text('AI提案・検索'), findsOneWidget);
     expect(find.text('ドライブ地図'), findsOneWidget);
-    expect(find.text('夫婦の行きたい！'), findsOneWidget);
-    expect(find.text('旅のしおり'), findsOneWidget);
+    expect(find.text('行きたい！リスト'), findsOneWidget);
   });
 
   test('直近の週末（11/9月曜日に調べたら11/14土〜11/15日）の自動算出テスト', () {
@@ -106,7 +88,7 @@ void main() {
 
     final spots = GeminiOutingService.getInitialSpots().take(2).toList();
     final text = CoupleSyncService.exportFavoritesShareText(spots, room);
-    expect(text.contains('夫婦の行きたいスポット一覧'), isTrue);
+    expect(text.contains('行きたいスポット一覧'), isTrue);
     expect(text.contains(room), isTrue);
   });
 
@@ -172,12 +154,11 @@ void main() {
     );
 
     final list = [hotelSpot, dinoSpot, pikachuSpot];
+    // GeminiOutingService内部の比較ロジックをテスト
+    // ピカチュウや恐竜が上位になり、ホテルシネマナイトが最下位になることを確認
     final sorted = GeminiOutingService.sortSpotsForFamily(list);
 
-    expect(
-      sorted.first.title.contains('ピカチュウ') || sorted.first.title.contains('恐竜'),
-      isTrue,
-    );
+    expect(sorted.first.title.contains('ピカチュウ') || sorted.first.title.contains('恐竜'), isTrue);
     expect(sorted.last.id, 'hotel_event');
   });
 
@@ -190,7 +171,56 @@ void main() {
     expect(TohokuRegion.aomori.ikoyoPrefectureId, 2);
   });
 
-  test('旅のしおり・カレンダー連携・JSON復元のテスト', () {
+  test('子どもとお出かけ情報「いこーよ」のイベントが最優先で上位に来るテスト', () {
+    final generalEvent = OutingSpot(
+      id: 'general_event',
+      title: '秋の蔵王観光キャンペーン',
+      subtitle: '地域の観光物産展',
+      category: SpotCategory.event,
+      tags: const [SpotTag.food],
+      driveMinutes: 20,
+      distanceKm: 12.0,
+      scheduleText: '11/7〜11/8開催',
+      parkingInfo: '駐車場あり',
+      recommendPoints: const ['物産フェア'],
+      aiTip: '',
+      address: '蔵王町',
+      latitude: 38.1,
+      longitude: 140.5,
+      weatherText: '晴れ',
+      sourceInfo: 'Walkerplusイベント情報',
+      url: '',
+    );
+
+    final ikoyoEvent = OutingSpot(
+      id: 'ikoyo_4_nature_kids',
+      title: 'むかっち博士の自然観察会「冬越しの動物探し」',
+      subtitle: '小学生・親子で楽しむ生き物ふれあい＆自然体験',
+      category: SpotCategory.event,
+      tags: const [SpotTag.kids, SpotTag.nature],
+      driveMinutes: 30, // 距離的には一般イベントより少し遠い
+      distanceKm: 20.0,
+      scheduleText: '11/7開催',
+      parkingInfo: '無料駐車場あり',
+      recommendPoints: const ['子ども向け自然体験'],
+      aiTip: '',
+      address: '仙台市若林区荒井',
+      latitude: 38.25,
+      longitude: 140.95,
+      weatherText: '晴れ',
+      sourceInfo: '子どもとお出かけ情報 いこーよ',
+      url: '',
+    );
+
+    final sorted = GeminiOutingService.sortSpotsForFamily([generalEvent, ikoyoEvent]);
+    // 距離が遠くても「いこーよ」のファミリー向けイベントが第1位になることを確認
+    expect(sorted.first.id, 'ikoyo_4_nature_kids');
+    expect(sorted.first.sourceInfo, contains('いこーよ'));
+    expect(sorted.first.sourceBadgeLabel, 'いこーよ');
+    expect(sorted.first.sourceBadgeIcon, '🧒');
+    expect(generalEvent.sourceBadgeLabel, 'Walkerplus');
+    expect(generalEvent.sourceBadgeIcon, '🚶');
+
     final osakaNagoyaPlan = TripPlan.createOsakaNagoyaStarter();
     expect(osakaNagoyaPlan.title, contains('大阪・名古屋'));
     expect(osakaNagoyaPlan.totalDays, 3);
@@ -214,7 +244,6 @@ void main() {
       restored.toGoogleCalendarUrl(DateTime(2026, 11, 14)),
       contains('calendar/render'),
     );
-    expect(restored.googleSearchUrl, contains('google.com/search'));
   });
 
   test('旧gourmetカテゴリが食事処（dining）へ自動集約フォールバックされるテスト', () {
@@ -237,119 +266,6 @@ void main() {
 
     final spot = OutingSpot.fromJson(oldGourmetJson);
     expect(spot.category, SpotCategory.dining);
-  });
-
-  test('商用版：無料検索クォータ消費・リワード回復(+3)・プレミアム無制限テスト', () async {
-    expect(await MonetizationService.isPremium(), isFalse);
-    expect(
-      await MonetizationService.getRemainingSearches(),
-      MonetizationService.freeDailySearchLimit,
-    );
-
-    // 5回まで検索成功、6回目は上限到達でfalse
-    for (int i = 0; i < MonetizationService.freeDailySearchLimit; i++) {
-      expect(await MonetizationService.tryConsumeSearch(), isTrue);
-    }
-    expect(await MonetizationService.getRemainingSearches(), 0);
-    expect(await MonetizationService.tryConsumeSearch(), isFalse);
-
-    // リワード動画視聴で+3回回復
-    final recovered = await MonetizationService.grantRewardSearchBonus();
-    expect(recovered, MonetizationService.rewardRecoveryAmount);
-    expect(await MonetizationService.tryConsumeSearch(), isTrue);
-    expect(
-      await MonetizationService.getRemainingSearches(),
-      MonetizationService.rewardRecoveryAmount - 1,
-    );
-
-    // プレミアム切替後はクォータを消費せず無制限でtrue
-    await MonetizationService.setPremium(true);
-    expect(await MonetizationService.isPremium(), isTrue);
-    expect(await MonetizationService.tryConsumeSearch(), isTrue);
-    expect(
-      await MonetizationService.getRemainingSearches(),
-      MonetizationService.rewardRecoveryAmount - 1,
-    );
-  });
-
-  test('商用版：常設7ジャンル定義＆初期5ジャンル（温泉・神社仏閣除外）＆Google検索・アフィリエイトURL生成テスト', () {
-    expect(SpotCategory.commercialCategories.length, 7);
-    expect(SpotCategory.defaultVisibleCategories.length, 5);
-    expect(
-      SpotCategory.defaultVisibleCategories.contains(SpotCategory.onsen),
-      isFalse,
-    );
-    expect(
-      SpotCategory.defaultVisibleCategories.contains(SpotCategory.sightseeing),
-      isFalse,
-    );
-    expect(SpotCategory.fromKey('dining'), SpotCategory.dining);
-    expect(
-      SpotCategory.commercialCategories.contains(SpotCategory.event),
-      isFalse,
-    );
-    expect(
-      SpotCategory.commercialCategories.contains(SpotCategory.gourmet),
-      isFalse,
-    );
-
-    expect(
-      AffiliateLinkBuilder.buildGoogleEventSearchUrl(areaName: '宮城県'),
-      contains('https://www.google.com/search?q='),
-    );
-    expect(
-      AffiliateLinkBuilder.buildJalanUrl('松島 温泉'),
-      contains('jalan.net'),
-    );
-    expect(
-      ShiftJisEncoder.encodeUriComponent('秋保温泉'),
-      '%8F%48%95%DB%89%B7%90%F2',
-    );
-    expect(
-      AffiliateLinkBuilder.buildJalanUrl('秋保温泉'),
-      contains('%258F%2548%2595%25DB%2589%25B7%2590%25F2'),
-    );
-    expect(
-      AffiliateLinkBuilder.normalizeTravelKeyword('宮城・仙台・泉エリア 家族 温泉'),
-      '仙台 温泉',
-    );
-    expect(
-      AffiliateLinkBuilder.normalizeTravelKeyword(
-          '宮城県柴田郡川崎町小野 国営みちのく杜の湖畔公園'),
-      '宮城県 川崎町',
-    );
-    expect(
-      AffiliateLinkBuilder.normalizeTravelKeyword('秋保温泉'),
-      '秋保温泉',
-    );
-    expect(
-      AffiliateLinkBuilder.buildAsoviewUrl('仙台 水族館'),
-      contains('asoview.com'),
-    );
-    expect(
-      AffiliateLinkBuilder.buildRakutenTravelUrl('秋保温泉'),
-      contains('travel.rakuten.co.jp'),
-    );
-    expect(
-      AffiliateLinkBuilder.buildAmazonGoodsUrl('レジャーシート'),
-      contains('amazon.co.jp'),
-    );
-  });
-
-  test('全国47都道府県カスタム地域定義と最寄り都道府県判定（nearestTo）のテスト', () {
-    expect(TohokuRegion.values.length, 47);
-    expect(TohokuRegion.defaultTohokuRegions.length, 6);
-    expect(TohokuRegion.allAreaGroups.length, 7);
-
-    expect(TohokuRegion.fromKey('tokyo'), TohokuRegion.tokyo);
-    expect(TohokuRegion.fromKey('unknown_key'), isNull);
-
-    // 東京駅付近 -> 東京都
-    expect(TohokuRegion.nearestTo(35.6812, 139.7671), TohokuRegion.tokyo);
-    // 仙台市中心部 -> 宮城県
-    expect(TohokuRegion.nearestTo(38.2682, 140.8694), TohokuRegion.miyagi);
-    // 大阪市付近 -> 大阪府
-    expect(TohokuRegion.nearestTo(34.6937, 135.5023), TohokuRegion.osaka);
   });
 
   test('夫婦お気に入りの安全マージ同期（片方の上書きで相手が消えない＆2人とも昇格）テスト', () {

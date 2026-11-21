@@ -32,6 +32,7 @@ migrate_working_dir/
 .pub/
 /build/
 /web_app/build/
+/web_commercial/build/
 /coverage/
 
 # Symbolication related

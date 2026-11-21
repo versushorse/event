@@ -608,14 +608,16 @@ void showVisitedStampEditorDialog({
                           label: const Text('アルバムから追加',
                               style: TextStyle(fontSize: 12)),
                         ),
-                        OutlinedButton.icon(
-                          onPressed: isPickingPhoto
-                              ? null
-                              : () => pickFromCamera(setDialogState),
-                          icon: const Icon(Icons.camera_alt_outlined, size: 17),
-                          label: const Text('カメラで撮影',
-                              style: TextStyle(fontSize: 12)),
-                        ),
+                        if (!kIsWeb)
+                          OutlinedButton.icon(
+                            onPressed: isPickingPhoto
+                                ? null
+                                : () => pickFromCamera(setDialogState),
+                            icon:
+                                const Icon(Icons.camera_alt_outlined, size: 17),
+                            label: const Text('カメラで撮影',
+                                style: TextStyle(fontSize: 12)),
+                          ),
                       ],
                     ),
                   if (photoWarning != null) ...[

@@ -43,7 +43,7 @@ class WeekendOutingApp extends StatelessWidget {
     );
 
     return MaterialApp(
-      title: 'おでかけナビ',
+      title: '週末どこ行く？AIお出かけナビ',
       debugShowCheckedModeBanner: false,
       theme: baseTheme.copyWith(
         textTheme: _applyJapaneseLocale(baseTheme.textTheme),

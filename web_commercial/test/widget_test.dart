@@ -1,0 +1,517 @@
+// アプリ全体の基本動作・東北地域タブ・直近週末計算を確認するテスト
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:weekend_outing_web/main.dart';
+import 'package:weekend_outing_web/models/outing_spot.dart';
+import 'package:weekend_outing_web/services/gemini_service.dart';
+import 'package:weekend_outing_web/services/location_service.dart';
+import 'package:weekend_outing_web/services/monetization_service.dart';
+import 'package:weekend_outing_web/services/sync_service.dart';
+import 'package:weekend_outing_web/utils/shift_jis_encoder.dart';
+import 'package:weekend_outing_web/widgets/safe_chips.dart';
+import 'package:weekend_outing_web/widgets/visited_memory_widgets.dart';
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
+  testWidgets('週末お出かけナビ商用版のホーム画面・東北6県タブ・7大ジャンル・PR広告枠が表示されるかテスト',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const WeekendOutingApp());
+    await tester.pumpAndSettle();
+
+    // アプリタイトルと東北地域タブ・Google Places主軸の常設ジャンルが表示されていることを確認
+    expect(find.text('おでかけナビ'), findsOneWidget);
+    expect(find.text('宮城県'), findsWidgets);
+    expect(find.text('山形県'), findsWidgets);
+    expect(find.text('岩手県'), findsWidgets);
+    expect(find.text('地元グルメ・食事処'), findsWidgets);
+    expect(find.text('観光地・名所'), findsWidgets);
+    expect(find.text('大きな公園（小学生）'), findsWidgets);
+    expect(find.text('屋内スポット'), findsWidgets);
+    expect(find.text('小さな公園'), findsWidgets);
+    expect(find.text('ジャンル追加'), findsOneWidget);
+    // 初期表示から温泉・神社仏閣は除外されていることを確認（「ジャンル追加」から再ON可能）
+    expect(find.text('温泉・日帰り銭湯'), findsNothing);
+    expect(find.text('神社仏閣'), findsNothing);
+
+    // 現在地ボタン（左端）と地域変更ボタン（右端）が表示されていることを確認
+    expect(find.text('現在地'), findsOneWidget);
+    expect(find.text('地域変更'), findsOneWidget);
+
+    // 期間限定イベントのスクレイピングを終了し、Google検索ショートカットへ移行していることを確認
+    expect(find.text('期間限定イベント'), findsNothing);
+    expect(find.text('Googleで宮城県のイベント検索'), findsOneWidget);
+
+    // 下部広告バナー枠の非表示リンク（プレミアム案内）が表示されていることを確認
+    expect(find.text('広告非表示'), findsOneWidget);
+
+    // Web版ではGemini APIキー非保持のため、夫婦の好みAIナビが非表示であることを確認
+    expect(find.text('夫婦の好みAIナビ'), findsNothing);
+
+    // 下部ナビゲーションのタブが表示されていることを確認
+    expect(find.text('AI提案・検索'), findsOneWidget);
+    expect(find.text('ドライブ地図'), findsOneWidget);
+    expect(find.text('夫婦の行きたい！'), findsOneWidget);
+    expect(find.text('旅のしおり'), findsOneWidget);
+  });
+
+  test('直近の週末（11/9月曜日に調べたら11/14土〜11/15日）の自動算出テスト', () {
+    final mondayNov9 = DateTime(2026, 11, 9);
+    final weekendRange = GeminiOutingService.getUpcomingWeekendRange(mondayNov9);
+
+    expect(weekendRange.start, DateTime(2026, 11, 14));
+    expect(weekendRange.end, DateTime(2026, 11, 15));
+    expect(
+      GeminiOutingService.formatDateRange(weekendRange),
+      '11/14(土)〜11/15(日)',
+    );
+  });
+
+  test('距離計算と車での所要時間推定の単体テスト', () {
+    // 渋谷から横浜（約30km）の計算テスト
+    const startLat = 35.658034;
+    const startLng = 139.701636;
+    const endLat = 35.443708;
+    const endLng = 139.638026;
+
+    final dist = LocationService.calculateDistanceKm(
+      startLat: startLat,
+      startLng: startLng,
+      endLat: endLat,
+      endLng: endLng,
+    );
+    expect(dist, greaterThan(20.0));
+    expect(dist, lessThan(35.0));
+
+    final driveMin = LocationService.estimateDriveMinutes(dist);
+    expect(driveMin, greaterThan(25));
+    expect(driveMin, lessThan(60));
+  });
+
+  test('夫婦共有用テキスト生成と合言葉保存のテスト', () async {
+    const room = 'tanaka-family';
+    await CoupleSyncService.saveRoomCode(room);
+    final loadedRoom = await CoupleSyncService.getRoomCode();
+    expect(loadedRoom, room);
+
+    // スマホ使用者（夫 or 妻）の設定・取得テスト（ハート押下時の自動識別用）
+    await CoupleSyncService.saveMyRole(PartnerPick.wife);
+    final loadedRole = await CoupleSyncService.getMyRole();
+    expect(loadedRole, PartnerPick.wife);
+
+    final spots = GeminiOutingService.getInitialSpots().take(2).toList();
+    final text = CoupleSyncService.exportFavoritesShareText(spots, room);
+    expect(text.contains('夫婦の行きたいスポット一覧'), isTrue);
+    expect(text.contains(room), isTrue);
+  });
+
+  test('ファミリー・お祭り・公園優先スコアリングソートのテスト', () {
+    final hotelSpot = OutingSpot(
+      id: 'hotel_event',
+      title: '仙台ロイヤルパークホテル ガーデンシネマナイト',
+      subtitle: '芝生の上で映画を楽しむナイトタイムイベント',
+      category: SpotCategory.event,
+      tags: const [SpotTag.kids],
+      driveMinutes: 10, // 距離的には一番近い
+      distanceKm: 5.0,
+      scheduleText: '11/8開催',
+      parkingInfo: '駐車場あり',
+      recommendPoints: const ['夜間のガーデン映画'],
+      aiTip: '',
+      address: '仙台市泉区寺岡',
+      latitude: 38.34,
+      longitude: 140.83,
+      weatherText: '晴れ',
+      sourceInfo: 'テスト',
+      url: '',
+    );
+
+    final dinoSpot = OutingSpot(
+      id: 'dino_event',
+      title: '大恐竜パークみちのく公園',
+      subtitle: '小学生・子どもが大興奮！恐竜アドベンチャーフェス',
+      category: SpotCategory.event,
+      tags: const [SpotTag.kids, SpotTag.nature],
+      driveMinutes: 40, // 距離的には遠い
+      distanceKm: 30.0,
+      scheduleText: '11/7〜11/8開催',
+      parkingInfo: '無料駐車場あり',
+      recommendPoints: const ['恐竜体験フェスティバル'],
+      aiTip: '',
+      address: '宮城県柴田郡川崎町',
+      latitude: 38.21,
+      longitude: 140.67,
+      weatherText: '晴れ',
+      sourceInfo: 'テスト',
+      url: '',
+    );
+
+    final pikachuSpot = OutingSpot(
+      id: 'pikachu_event',
+      title: 'ピカチュウがやってくる！ポケモンキッズフェスタ',
+      subtitle: '小学生親子で参加できるクイズ＆スタンプラリー',
+      category: SpotCategory.event,
+      tags: const [SpotTag.kids],
+      driveMinutes: 25,
+      distanceKm: 15.0,
+      scheduleText: '11/8開催',
+      parkingInfo: '無料駐車場あり',
+      recommendPoints: const ['ポケモンふれあい体験'],
+      aiTip: '',
+      address: '利府町',
+      latitude: 38.33,
+      longitude: 140.97,
+      weatherText: '晴れ',
+      sourceInfo: 'テスト',
+      url: '',
+    );
+
+    final list = [hotelSpot, dinoSpot, pikachuSpot];
+    final sorted = GeminiOutingService.sortSpotsForFamily(list);
+
+    expect(
+      sorted.first.title.contains('ピカチュウ') || sorted.first.title.contains('恐竜'),
+      isTrue,
+    );
+    expect(sorted.last.id, 'hotel_event');
+  });
+
+  test('東北6県のいこーよ都道府県コード（JISコード）設定テスト', () {
+    expect(TohokuRegion.miyagi.ikoyoPrefectureId, 4);
+    expect(TohokuRegion.yamagata.ikoyoPrefectureId, 6);
+    expect(TohokuRegion.iwate.ikoyoPrefectureId, 3);
+    expect(TohokuRegion.fukushima.ikoyoPrefectureId, 7);
+    expect(TohokuRegion.akita.ikoyoPrefectureId, 5);
+    expect(TohokuRegion.aomori.ikoyoPrefectureId, 2);
+  });
+
+  test('旅のしおり・カレンダー連携・JSON復元のテスト', () {
+    final osakaNagoyaPlan = TripPlan.createOsakaNagoyaStarter();
+    expect(osakaNagoyaPlan.title, contains('大阪・名古屋'));
+    expect(osakaNagoyaPlan.totalDays, 3);
+    expect(osakaNagoyaPlan.items.any((i) => i.title.contains('ジブリパーク')), isTrue);
+    expect(osakaNagoyaPlan.toShareText(), contains('Day 1'));
+
+    final spot = GeminiOutingService.getInitialSpots().first;
+    final visitedSpot = spot.copyWith(
+      isVisited: true,
+      visitedDate: '2026/11/08',
+      visitedRating: 5,
+      visitedMemory: '子どもが大喜び！',
+    );
+    final restored = OutingSpot.fromJson(visitedSpot.toJson());
+    expect(restored.isVisited, isTrue);
+    expect(restored.visitedDate, '2026/11/08');
+    expect(restored.visitedRating, 5);
+    expect(restored.visitedMemory, '子どもが大喜び！');
+    expect(restored.toTimeTreeCopyText(), contains(spot.title));
+    expect(
+      restored.toGoogleCalendarUrl(DateTime(2026, 11, 14)),
+      contains('calendar/render'),
+    );
+    expect(restored.googleSearchUrl, contains('google.com/search'));
+  });
+
+  test('旧gourmetカテゴリが食事処（dining）へ自動集約フォールバックされるテスト', () {
+    final oldGourmetJson = {
+      'id': 'gourmet_old_1',
+      'title': 'あ・ら・伊達な道の駅',
+      'subtitle': '全国人気ナンバーワンの道の駅',
+      'category': 'gourmet',
+      'tags': ['food', 'kids'],
+      'driveMinutes': 50,
+      'distanceKm': 45.0,
+      'scheduleText': '9:00〜18:00',
+      'parkingInfo': '無料駐車場300台',
+      'recommendPoints': ['ロイズソフトクリーム'],
+      'aiTip': '',
+      'address': '大崎市岩出山',
+      'latitude': 38.65,
+      'longitude': 140.85,
+    };
+
+    final spot = OutingSpot.fromJson(oldGourmetJson);
+    expect(spot.category, SpotCategory.dining);
+  });
+
+  test('商用版：無料検索クォータ消費・リワード回復(+3)・プレミアム無制限テスト', () async {
+    expect(await MonetizationService.isPremium(), isFalse);
+    expect(
+      await MonetizationService.getRemainingSearches(),
+      MonetizationService.freeDailySearchLimit,
+    );
+
+    // 5回まで検索成功、6回目は上限到達でfalse
+    for (int i = 0; i < MonetizationService.freeDailySearchLimit; i++) {
+      expect(await MonetizationService.tryConsumeSearch(), isTrue);
+    }
+    expect(await MonetizationService.getRemainingSearches(), 0);
+    expect(await MonetizationService.tryConsumeSearch(), isFalse);
+
+    // リワード動画視聴で+3回回復
+    final recovered = await MonetizationService.grantRewardSearchBonus();
+    expect(recovered, MonetizationService.rewardRecoveryAmount);
+    expect(await MonetizationService.tryConsumeSearch(), isTrue);
+    expect(
+      await MonetizationService.getRemainingSearches(),
+      MonetizationService.rewardRecoveryAmount - 1,
+    );
+
+    // プレミアム切替後はクォータを消費せず無制限でtrue
+    await MonetizationService.setPremium(true);
+    expect(await MonetizationService.isPremium(), isTrue);
+    expect(await MonetizationService.tryConsumeSearch(), isTrue);
+    expect(
+      await MonetizationService.getRemainingSearches(),
+      MonetizationService.rewardRecoveryAmount - 1,
+    );
+  });
+
+  test('商用版：常設7ジャンル定義＆初期5ジャンル（温泉・神社仏閣除外）＆Google検索・アフィリエイトURL生成テスト', () {
+    expect(SpotCategory.commercialCategories.length, 7);
+    expect(SpotCategory.defaultVisibleCategories.length, 5);
+    expect(
+      SpotCategory.defaultVisibleCategories.contains(SpotCategory.onsen),
+      isFalse,
+    );
+    expect(
+      SpotCategory.defaultVisibleCategories.contains(SpotCategory.sightseeing),
+      isFalse,
+    );
+    expect(SpotCategory.fromKey('dining'), SpotCategory.dining);
+    expect(
+      SpotCategory.commercialCategories.contains(SpotCategory.event),
+      isFalse,
+    );
+    expect(
+      SpotCategory.commercialCategories.contains(SpotCategory.gourmet),
+      isFalse,
+    );
+
+    expect(
+      AffiliateLinkBuilder.buildGoogleEventSearchUrl(areaName: '宮城県'),
+      contains('https://www.google.com/search?q='),
+    );
+    expect(
+      AffiliateLinkBuilder.buildJalanUrl('松島 温泉'),
+      contains('jalan.net'),
+    );
+    expect(
+      ShiftJisEncoder.encodeUriComponent('秋保温泉'),
+      '%8F%48%95%DB%89%B7%90%F2',
+    );
+    expect(
+      AffiliateLinkBuilder.buildJalanUrl('秋保温泉'),
+      contains('%258F%2548%2595%25DB%2589%25B7%2590%25F2'),
+    );
+    expect(
+      AffiliateLinkBuilder.normalizeTravelKeyword('宮城・仙台・泉エリア 家族 温泉'),
+      '仙台 温泉',
+    );
+    expect(
+      AffiliateLinkBuilder.normalizeTravelKeyword(
+          '宮城県柴田郡川崎町小野 国営みちのく杜の湖畔公園'),
+      '宮城県 川崎町',
+    );
+    expect(
+      AffiliateLinkBuilder.normalizeTravelKeyword('秋保温泉'),
+      '秋保温泉',
+    );
+    expect(
+      AffiliateLinkBuilder.buildAsoviewUrl('仙台 水族館'),
+      contains('asoview.com'),
+    );
+    expect(
+      AffiliateLinkBuilder.buildRakutenTravelUrl('秋保温泉'),
+      contains('travel.rakuten.co.jp'),
+    );
+    expect(
+      AffiliateLinkBuilder.buildAmazonGoodsUrl('レジャーシート'),
+      contains('amazon.co.jp'),
+    );
+  });
+
+  test('全国47都道府県カスタム地域定義と最寄り都道府県判定（nearestTo）のテスト', () {
+    expect(TohokuRegion.values.length, 47);
+    expect(TohokuRegion.defaultTohokuRegions.length, 6);
+    expect(TohokuRegion.allAreaGroups.length, 7);
+
+    expect(TohokuRegion.fromKey('tokyo'), TohokuRegion.tokyo);
+    expect(TohokuRegion.fromKey('unknown_key'), isNull);
+
+    // 東京駅付近 -> 東京都
+    expect(TohokuRegion.nearestTo(35.6812, 139.7671), TohokuRegion.tokyo);
+    // 仙台市中心部 -> 宮城県
+    expect(TohokuRegion.nearestTo(38.2682, 140.8694), TohokuRegion.miyagi);
+    // 大阪市付近 -> 大阪府
+    expect(TohokuRegion.nearestTo(34.6937, 135.5023), TohokuRegion.osaka);
+  });
+
+  test('夫婦お気に入りの安全マージ同期（片方の上書きで相手が消えない＆2人とも昇格）テスト', () {
+    final samples = GeminiOutingService.getInitialSpots();
+    final spotA = samples[0].copyWith(isFavorite: true, pickedBy: PartnerPick.husband);
+    final spotB = samples[1].copyWith(isFavorite: true, pickedBy: PartnerPick.wife);
+    final spotCHusband = samples[2].copyWith(isFavorite: true, pickedBy: PartnerPick.husband);
+    final spotCWife = samples[2].copyWith(isFavorite: true, pickedBy: PartnerPick.wife);
+
+    // 1. 夫(ローカル)がAとCを持ち、妻(クラウド)がBとCだけを上書きした状態でもAが消えず、Cはbothになる
+    final merged = CoupleSyncService.mergeSpotsForTesting(
+      localSpots: [spotA, spotCHusband],
+      localUpdated: {spotA.id: 1000, spotCHusband.id: 1000},
+      cloudSpots: [spotB, spotCWife],
+      cloudTimestamp: 2000,
+      cloudUpdated: {spotB.id: 2000, spotCWife.id: 2000},
+    );
+
+    expect(merged.length, 3);
+    expect(merged.any((s) => s.id == spotA.id), isTrue);
+    expect(merged.any((s) => s.id == spotB.id), isTrue);
+    final mergedC = merged.firstWhere((s) => s.id == spotCHusband.id);
+    expect(mergedC.pickedBy, PartnerPick.both);
+
+    // 2. 相手が明示的にspotAを削除（削除ログ時刻 > ローカル更新時刻）したときは削除される
+    final mergedAfterDelete = CoupleSyncService.mergeSpotsForTesting(
+      localSpots: [spotA],
+      localUpdated: {spotA.id: 1000},
+      cloudSpots: [spotB],
+      cloudTimestamp: 3000,
+      cloudUpdated: {spotB.id: 2000},
+      cloudDeleted: {spotA.id: 3000},
+    );
+    expect(mergedAfterDelete.any((s) => s.id == spotA.id), isFalse);
+    expect(mergedAfterDelete.any((s) => s.id == spotB.id), isTrue);
+  });
+
+  test('PartnerPickのindex後方互換（husband=0, wife=1, both=2）確認テスト', () {
+    expect(PartnerPick.husband.index, 0);
+    expect(PartnerPick.wife.index, 1);
+    expect(PartnerPick.both.index, 2);
+  });
+
+  testWidgets('SafeChip群が文字切れせず完全ラベル表示＆タップ応答できるテスト',
+      (WidgetTester tester) async {
+    bool selected = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    SafeChoiceChip(
+                      avatar: const Text('🎪'),
+                      label: const Text('期間限定イベント'),
+                      selected: selected,
+                      onSelected: (v) => setState(() => selected = v),
+                    ),
+                    SafeActionChip(
+                      label: const Text('🍽️ 周辺の食事処・ランチ'),
+                      onPressed: () {},
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('期間限定イベント'), findsOneWidget);
+    expect(find.text('🍽️ 周辺の食事処・ランチ'), findsOneWidget);
+    await tester.tap(find.text('期間限定イベント'));
+    await tester.pumpAndSettle();
+    expect(selected, isTrue);
+  });
+
+  test('思い出写真（visitedPhotos）のJSON保存・同期マージ・共有テキストテスト', () {
+    const samplePhoto =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    final baseSpot = GeminiOutingService.getInitialSpots().first;
+    final spotWithPhoto = baseSpot.copyWith(
+      isFavorite: true,
+      isVisited: true,
+      visitedDate: '2026/11/10',
+      visitedMemory: '素敵な景色でした',
+      visitedPhotos: const [samplePhoto],
+    );
+
+    final restoredFromJson = OutingSpot.fromJson(spotWithPhoto.toJson());
+    expect(restoredFromJson.visitedPhotos, [samplePhoto]);
+
+    final restoredFromSync = OutingSpot.fromJson(spotWithPhoto.toSyncJson());
+    expect(restoredFromSync.visitedPhotos, [samplePhoto]);
+
+    // クラウド側が写真未対応フォーマット等で空写真配列を送ってきた場合でもローカル写真を保護
+    final merged = CoupleSyncService.mergeSpotsForTesting(
+      localSpots: [spotWithPhoto],
+      localUpdated: {spotWithPhoto.id: 1000},
+      cloudSpots: [
+        baseSpot.copyWith(isFavorite: true, isVisited: true, visitedPhotos: const []),
+      ],
+      cloudTimestamp: 2000,
+      cloudUpdated: {spotWithPhoto.id: 2000},
+    );
+    expect(merged.first.visitedPhotos, [samplePhoto]);
+
+    final shareText = CoupleSyncService.exportFavoritesShareText([spotWithPhoto], 'test-room');
+    expect(shareText.contains('思い出写真: 1枚'), isTrue);
+  });
+
+  testWidgets('VisitedMemoryBoxと写真添付スタンプ編集ダイアログの表示・保存テスト',
+      (WidgetTester tester) async {
+    const samplePhoto =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    final spot = GeminiOutingService.getInitialSpots().first.copyWith(
+      isFavorite: true,
+      isVisited: true,
+      visitedDate: '2026/11/10',
+      visitedMemory: '楽しかった！',
+      visitedPhotos: const [samplePhoto],
+    );
+    OutingSpot? savedSpot;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) {
+              return VisitedMemoryBox(
+                spot: spot,
+                onEditTap: () {
+                  showVisitedStampEditorDialog(
+                    context: context,
+                    spot: spot,
+                    onSave: (updated) => savedSpot = updated,
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('楽しかった！'), findsOneWidget);
+    expect(find.byType(Image), findsOneWidget);
+
+    await tester.tap(find.text('編集'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('思い出写真'), findsOneWidget);
+    expect(find.text('アルバムから追加'), findsOneWidget);
+
+    await tester.tap(find.text('保存する'));
+    await tester.pumpAndSettle();
+
+    expect(savedSpot, isNotNull);
+    expect(savedSpot!.visitedPhotos, [samplePhoto]);
+  });
+}

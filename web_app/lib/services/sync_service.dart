@@ -47,6 +47,9 @@ class CoupleSyncService {
   static const String _prefLastSyncKey = 'couple_last_sync_time';
   static const String _prefLocalUpdatedAtKey = 'couple_local_updated_at';
 
+  /// 無料KVS（設定不要のキーバリューストア）のAppKey
+  static const String _fallbackKvsAppKey = '2pbg4ppa';
+
   /// このスマホの使用者（夫 / 妻 / 自分）を取得する（未設定ならnull）
   static Future<PartnerPick?> getMyRole() async {
     final prefs = await SharedPreferences.getInstance();
@@ -63,23 +66,17 @@ class CoupleSyncService {
     await prefs.setString(_prefMyRoleKey, role.name);
   }
 
-  /// ローカルに保存された共有合言葉を取得する（未設定・旧共通デフォルト時は空文字を返す）
+  /// ローカルに保存された共有合言葉を取得する（Web版は他ユーザーと混ざらないよう端末ごとのランダム合言葉を自動生成）
   static Future<String> getRoomCode() async {
     final prefs = await SharedPreferences.getInstance();
-    final code = prefs.getString(_prefRoomKey)?.trim() ?? '';
-    if (code.isEmpty || code == 'family-weekend') {
-      return '';
+    var code = prefs.getString(_prefRoomKey);
+    if (code == null || code.trim().isEmpty) {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final hash = (timestamp % 1679616).toRadixString(36).padLeft(4, '0');
+      code = 'spot-$hash';
+      await prefs.setString(_prefRoomKey, code);
     }
     return code;
-  }
-
-  /// 商用版向け：推測困難なペア専用合言葉（例: pair-a7k3-m9p2）を自動発行する
-  static String generateRandomRoomCode() {
-    const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
-    final rand = math.Random.secure();
-    String chunk() =>
-        List.generate(4, (_) => chars[rand.nextInt(chars.length)]).join();
-    return 'pair-${chunk()}-${chunk()}';
   }
 
   /// 共有合言葉を保存する
@@ -237,6 +234,20 @@ class CoupleSyncService {
         debugPrint('しおりFirebaseプッシュエラー: $e');
       }
     }
+
+    final cdnTopic = 'weekend_outing_trips_$sanitizedCode';
+    try {
+      final cdnPostUrl = Uri.parse('https://ntfy.sh/$cdnTopic');
+      await http
+          .post(
+            cdnPostUrl,
+            headers: {'Title': 'CoupleTripsSync'},
+            body: jsonStr,
+          )
+          .timeout(const Duration(seconds: 4));
+    } catch (e) {
+      debugPrint('しおりCDNプッシュ注意: $e');
+    }
   }
 
   /// 旅のしおりをクラウドからプルして最新状態を反映（ID単位で安全マージ）
@@ -275,6 +286,38 @@ class CoupleSyncService {
         }
       } catch (e) {
         debugPrint('しおりFirebase取得エラー: $e');
+      }
+    } else {
+      final cdnTopic = 'weekend_outing_trips_$sanitizedCode';
+      final cdnPollUrl = Uri.parse('https://ntfy.sh/$cdnTopic/json?poll=1');
+      try {
+        final cdnRes =
+            await http.get(cdnPollUrl).timeout(const Duration(seconds: 4));
+        if (cdnRes.statusCode == 200 && cdnRes.body.isNotEmpty) {
+          final lines = cdnRes.body.split('\n');
+          for (final line in lines.reversed) {
+            final trimmed = line.trim();
+            if (trimmed.isEmpty) continue;
+            try {
+              final obj = jsonDecode(trimmed) as Map<String, dynamic>;
+              if (obj['event'] == 'message' && obj['message'] != null) {
+                final msgStr = obj['message'] as String;
+                final parsed = jsonDecode(msgStr);
+                if (parsed is Map<String, dynamic>) {
+                  cloudTimestamp = (parsed['timestamp'] as num?)?.toInt() ?? 0;
+                  final rawTrips = parsed['trips'] as List<dynamic>? ?? [];
+                  cloudTrips = rawTrips
+                      .map((item) =>
+                          TripPlan.fromJson(item as Map<String, dynamic>))
+                      .toList();
+                  break;
+                }
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (e) {
+        debugPrint('しおりCDN取得注意: $e');
       }
     }
 
@@ -608,9 +651,14 @@ class CoupleSyncService {
     );
   }
 
-  /// クラウド（Firebase）から最新スナップショットを取得
+  /// クラウド（Firebase / CDN / KVS）から最新スナップショットを取得
   static Future<_CloudRoomSnapshot?> _fetchCloudSnapshot(
       String sanitizedCode) async {
+    int cloudTimestamp = 0;
+    List<OutingSpot>? cloudSpots;
+    Map<String, int> cloudUpdated = {};
+    Map<String, int> cloudDeleted = {};
+
     _CloudRoomSnapshot? parseDecoded(dynamic decoded) {
       if (decoded is Map<String, dynamic>) {
         final ts = (decoded['timestamp'] as num?)?.toInt() ?? 0;
@@ -660,11 +708,94 @@ class CoupleSyncService {
       } catch (e) {
         debugPrint('Firebase取得エラー: $e');
       }
+      return null;
+    }
+
+    // 2. 高速CDN（ntfy.sh）からPull
+    final cdnTopic = 'weekend_outing_couple_$sanitizedCode';
+    final cdnPollUrl = Uri.parse('https://ntfy.sh/$cdnTopic/json?poll=1');
+    try {
+      final cdnRes =
+          await http.get(cdnPollUrl).timeout(const Duration(seconds: 4));
+      if (cdnRes.statusCode == 200 && cdnRes.body.isNotEmpty) {
+        final lines = cdnRes.body.split('\n');
+        for (final line in lines.reversed) {
+          final trimmed = line.trim();
+          if (trimmed.isEmpty) continue;
+          try {
+            final obj = jsonDecode(trimmed) as Map<String, dynamic>;
+            if (obj['event'] == 'message') {
+              String jsonBody = '';
+              if (obj['attachment'] != null &&
+                  obj['attachment']['url'] != null) {
+                final attachUrl = obj['attachment']['url'] as String;
+                try {
+                  final attachRes = await http
+                      .get(Uri.parse(attachUrl))
+                      .timeout(const Duration(seconds: 4));
+                  if (attachRes.statusCode == 200) {
+                    jsonBody = attachRes.body;
+                  }
+                } catch (_) {}
+              }
+              if (jsonBody.isEmpty && obj['message'] != null) {
+                jsonBody = obj['message'] as String;
+              }
+              if (jsonBody.isNotEmpty) {
+                final snap = parseDecoded(jsonDecode(jsonBody));
+                if (snap != null) return snap;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      debugPrint('CDN取得注意: $e');
+    }
+
+    // 3. オープンKVSからも確認
+    try {
+      final kvsKey = 'room_$sanitizedCode';
+      final getUrl = Uri.parse(
+          'https://keyvalue.immanuel.co/api/KeyVal/GetValue/$_fallbackKvsAppKey/$kvsKey');
+      final getRes =
+          await http.get(getUrl).timeout(const Duration(seconds: 8));
+      if (getRes.statusCode == 200 && getRes.body.isNotEmpty) {
+        final rawVal = getRes.body.trim().replaceAll('"', '');
+        if (rawVal.isNotEmpty && rawVal != 'null') {
+          final jsonStr = _decodeBase64Url(rawVal);
+          final decoded = jsonDecode(jsonStr);
+          if (decoded is Map<String, dynamic>) {
+            cloudTimestamp = (decoded['ts'] as num?)?.toInt() ?? 0;
+            final rawList = decoded['sp'] as List<dynamic>? ?? [];
+            cloudSpots = rawList
+                .map((item) =>
+                    _fromCompactJson(item as Map<String, dynamic>))
+                .toList();
+          } else if (decoded is List) {
+            cloudSpots = decoded
+                .map((item) =>
+                    _fromCompactJson(item as Map<String, dynamic>))
+                .toList();
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('オープンKVS取得注意: $e');
+    }
+
+    if (cloudSpots != null) {
+      return _CloudRoomSnapshot(
+        timestamp: cloudTimestamp,
+        spots: cloudSpots,
+        updatedMap: cloudUpdated,
+        deletedMap: cloudDeleted,
+      );
     }
     return null;
   }
 
-  /// クラウド（Firebase）へ最新スナップショットをアップロード
+  /// クラウド（Firebase / CDN / KVS）へ最新スナップショットをアップロード
   static Future<void> _uploadCloudSnapshot({
     required String sanitizedCode,
     required int nowMs,
@@ -672,9 +803,6 @@ class CoupleSyncService {
     required Map<String, int> updatedMap,
     required Map<String, int> deletedMap,
   }) async {
-    final firebaseBaseUrl = AppApiKeys.firebaseRealtimeDbUrl.trim();
-    if (firebaseBaseUrl.isEmpty) return;
-
     final payload = {
       'v': 2,
       'timestamp': nowMs,
@@ -684,41 +812,150 @@ class CoupleSyncService {
     };
     final jsonStr = jsonEncode(payload);
 
+    final firebaseBaseUrl = AppApiKeys.firebaseRealtimeDbUrl.trim();
+    if (firebaseBaseUrl.isNotEmpty) {
+      try {
+        final cleanBaseUrl = firebaseBaseUrl.endsWith('/')
+            ? firebaseBaseUrl.substring(0, firebaseBaseUrl.length - 1)
+            : firebaseBaseUrl;
+        final endpoint = Uri.parse('$cleanBaseUrl/rooms/$sanitizedCode.json');
+        await http
+            .put(
+              endpoint,
+              headers: {'Content-Type': 'application/json'},
+              body: jsonStr,
+            )
+            .timeout(const Duration(seconds: 8));
+      } catch (e) {
+        debugPrint('Firebaseプッシュエラー: $e');
+      }
+      return;
+    }
+
+    final cdnTopic = 'weekend_outing_couple_$sanitizedCode';
     try {
-      final cleanBaseUrl = firebaseBaseUrl.endsWith('/')
-          ? firebaseBaseUrl.substring(0, firebaseBaseUrl.length - 1)
-          : firebaseBaseUrl;
-      final endpoint = Uri.parse('$cleanBaseUrl/rooms/$sanitizedCode.json');
+      final cdnPostUrl = Uri.parse('https://ntfy.sh/$cdnTopic');
       await http
-          .put(
-            endpoint,
-            headers: {'Content-Type': 'application/json'},
+          .post(
+            cdnPostUrl,
+            headers: {'Title': 'CoupleFavoritesSync'},
             body: jsonStr,
           )
-          .timeout(const Duration(seconds: 8));
+          .timeout(const Duration(seconds: 4));
     } catch (e) {
-      debugPrint('Firebaseプッシュエラー: $e');
+      debugPrint('CDNプッシュ注意: $e');
     }
+
+    try {
+      final kvsKey = 'room_$sanitizedCode';
+      final compactList = spots.take(20).map((s) => _toCompactJson(s)).toList();
+      final compactPayload = {
+        'ts': nowMs,
+        'sp': compactList,
+      };
+      final compactJsonStr = jsonEncode(compactPayload);
+      final b64 = _encodeBase64Url(compactJsonStr);
+
+      final updateUrl = Uri.parse(
+          'https://keyvalue.immanuel.co/api/KeyVal/UpdateValue/$_fallbackKvsAppKey/$kvsKey/$b64');
+      await http.post(
+        updateUrl,
+        headers: {'Content-Length': '0'},
+      ).timeout(const Duration(seconds: 8));
+    } catch (e) {
+      debugPrint('オープンKVSプッシュ注意: $e');
+    }
+  }
+
+  /// Base64Url エンコード
+  static String _encodeBase64Url(String input) {
+    final bytes = utf8.encode(input);
+    return base64UrlEncode(bytes).replaceAll('=', '');
+  }
+
+  /// Base64Url デコード
+  static String _decodeBase64Url(String input) {
+    var normalized = input.replaceAll('-', '+').replaceAll('_', '/');
+    final mod4 = normalized.length % 4;
+    if (mod4 == 2) normalized += '==';
+    if (mod4 == 3) normalized += '=';
+    final bytes = base64.decode(normalized);
+    return utf8.decode(bytes);
+  }
+
+  /// 軽量JSONへの変換（文字数圧縮用）
+  static Map<String, dynamic> _toCompactJson(OutingSpot spot) {
+    return {
+      'i': spot.id,
+      't': spot.title,
+      'a': spot.address,
+      'lt': spot.latitude,
+      'lg': spot.longitude,
+      'c': spot.category.name,
+      'p': spot.pickedBy?.index ?? 2,
+      'n': spot.coupleNote,
+      'd': spot.driveMinutes,
+      'km': spot.distanceKm,
+      'v': spot.isVisited ? 1 : 0,
+      'vd': spot.visitedDate,
+      'vr': spot.visitedRating,
+      'vm': spot.visitedMemory,
+    };
+  }
+
+  /// 軽量JSONからの復元
+  static OutingSpot _fromCompactJson(Map<String, dynamic> json) {
+    final catName = json['c'] as String? ?? 'onsen';
+    final cat = SpotCategory.values.firstWhere(
+      (c) => c.name == catName,
+      orElse: () => SpotCategory.onsen,
+    );
+    final pickIdx = json['p'] as int? ?? 2;
+    final pick = (pickIdx >= 0 && pickIdx < PartnerPick.values.length)
+        ? PartnerPick.values[pickIdx]
+        : PartnerPick.both;
+
+    return OutingSpot(
+      id: json['i'] as String? ?? '',
+      title: json['t'] as String? ?? '',
+      subtitle: json['sub'] as String? ?? '夫婦の共有スポット',
+      category: cat,
+      tags: const [SpotTag.kids, SpotTag.food],
+      driveMinutes: json['d'] as int? ?? 0,
+      distanceKm: (json['km'] as num?)?.toDouble() ?? 0.0,
+      scheduleText: '通年営業',
+      parkingInfo: '駐車場情報あり',
+      recommendPoints: const ['家族・夫婦で楽しめるおすすめスポット'],
+      aiTip: '週末のドライブや立ち寄りに最適です',
+      address: json['a'] as String? ?? '',
+      latitude: (json['lt'] as num?)?.toDouble() ?? 38.2682,
+      longitude: (json['lg'] as num?)?.toDouble() ?? 140.8694,
+      isFavorite: true,
+      pickedBy: pick,
+      coupleNote: json['n'] as String? ?? '',
+      isVisited: (json['v'] as int? ?? 0) == 1,
+      visitedDate: json['vd'] as String? ?? '',
+      visitedRating: (json['vr'] as int?) ?? 5,
+      visitedMemory: json['vm'] as String? ?? '',
+    );
   }
 
   /// 夫婦・パートナーのお気に入りをLINEやメールで共有するためのテキストを作成
   static String exportFavoritesShareText(
       List<OutingSpot> favorites, String roomCode) {
     if (favorites.isEmpty) {
-      return '【おでかけナビ】まだ行きたいスポットが登録されていません。\n合言葉: $roomCode';
+      return '【週末お出かけナビ】まだ行きたいスポットが登録されていません。\n合言葉: $roomCode';
     }
 
     final buffer = StringBuffer();
-    buffer.writeln('💑 おでかけナビ 夫婦の行きたいスポット一覧');
-    buffer.writeln('🔑 家族合言葉: $roomCode\n');
+    buffer.writeln('💖 週末どこ行く？行きたいスポット一覧');
+    buffer.writeln('🔑 合言葉: $roomCode\n');
 
     for (var i = 0; i < favorites.length; i++) {
       final spot = favorites[i];
-      final pickLabel = spot.pickedBy?.label ?? '2人とも';
       final visitedBadge = spot.isVisited ? ' 💮[行ったよ！]' : '';
       buffer.writeln('${i + 1}. ${spot.title}$visitedBadge');
       buffer.writeln('   📍 ${spot.address}');
-      buffer.writeln('   🙋 担当: $pickLabel');
       if (spot.coupleNote.isNotEmpty) {
         buffer.writeln('   💬 メモ: ${spot.coupleNote}');
       }
@@ -734,7 +971,7 @@ class CoupleSyncService {
       buffer.writeln();
     }
 
-    buffer.writeln('アプリの「夫婦の行きたい！」画面で合言葉「$roomCode」を入力すると同期できます！');
+    buffer.writeln('アプリの「行きたい！リスト」画面で合言葉「$roomCode」を入力すると共有できます！');
     return buffer.toString();
   }
 
