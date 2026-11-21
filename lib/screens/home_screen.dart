@@ -1856,10 +1856,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   const Text(
                     '週末どこ行く？AIナビ',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.bold),
                   ),
                   Text(
                     '地域: ${_isCurrentLocationSelected ? "現在地（${_currentLocation?.label ?? _selectedRegion.label}）" : _selectedRegion.label} ｜ 期間: $dateLabel（$_dateRangePresetLabel）',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 11,
                       color: colorScheme.onSurfaceVariant,
@@ -1899,16 +1903,25 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
             tooltip: '📅 イベント期間指定',
             onPressed: () => _showDateRangeSelectorSheet(context),
             icon: const Icon(Icons.calendar_month_outlined),
           ),
           IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
             tooltip: '🎒 持ち物チェック',
             onPressed: () => _showPackingListSheet(context),
             icon: const Icon(Icons.backpack_outlined),
           ),
           IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
             tooltip: '出発エリアの設定',
             onPressed: () => _showDepartureAreaDialog(context),
             icon: const Icon(Icons.edit_location_alt_outlined),
@@ -2973,19 +2986,26 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        const Text('💬 ', style: TextStyle(fontSize: 14)),
-                        Text(
-                          'Googleマップのレビュー・評価',
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue.shade900,
-                          ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('💬 ', style: TextStyle(fontSize: 14)),
+                            Text(
+                              'Googleマップのレビュー・評価',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue.shade900,
+                              ),
+                            ),
+                          ],
                         ),
-                        if (spot.googleRatingBadgeText.isNotEmpty) ...[
-                          const SizedBox(width: 6),
+                        if (spot.googleRatingBadgeText.isNotEmpty)
                           Container(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 7, vertical: 2),
@@ -3002,8 +3022,6 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                           ),
-                        ],
-                        const Spacer(),
                         InkWell(
                           onTap: () => _launchGoogleMaps(spot),
                           child: Text(
@@ -3922,19 +3940,26 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            const Text('💬 ', style: TextStyle(fontSize: 16)),
-                            Text(
-                              'Googleマップのレビュー・評価',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue.shade900,
-                              ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text('💬 ', style: TextStyle(fontSize: 16)),
+                                Text(
+                                  'Googleマップのレビュー・評価',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue.shade900,
+                                  ),
+                                ),
+                              ],
                             ),
-                            if (spot.googleRatingBadgeText.isNotEmpty) ...[
-                              const SizedBox(width: 8),
+                            if (spot.googleRatingBadgeText.isNotEmpty)
                               Container(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 2),
@@ -3951,7 +3976,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ),
                                 ),
                               ),
-                            ],
                           ],
                         ),
                         if (spot.googleReviews.isNotEmpty) ...[

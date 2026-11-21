@@ -1,4 +1,4 @@
-// ホーム画面（Web公開版：東北6県タブ・期間指定イベント検索・Google Maps周辺立ち寄り検索・天気予報連携・GPS連携）
+// ホーム画面（Android版：東北6県タブ・期間指定イベント検索・Google Maps周辺立ち寄り検索・天気予報連携・夫婦リアルタイム同期・GPS連携）
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -46,8 +46,22 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 現在地取得中フラグ
   bool _isLocating = false;
 
-  /// 選択中の東北地域タブ（デフォルト：宮城県）
+  static const String _prefKeyCustomRegions = 'custom_favorite_regions_v1';
+
+  /// ユーザーがカスタマイズ可能な地域タブ一覧（初期表示：東北6県）
+  List<TohokuRegion> _customRegions =
+      List<TohokuRegion>.from(TohokuRegion.defaultTohokuRegions);
+
+  /// 左端の「現在地」ボタンが選択されているか
+  bool _isCurrentLocationSelected = false;
+
+  /// 選択中の地域タブ（デフォルト：宮城県）
   TohokuRegion _selectedRegion = TohokuRegion.miyagi;
+
+  /// 現在選択中エリアの表示名（「現在地」選択時はGPSエリア名、地域選択時は都道府県名）
+  String get _activeAreaLabel => _isCurrentLocationSelected
+      ? (_currentLocation?.label ?? _selectedRegion.label)
+      : _selectedRegion.label;
 
   /// 選択中地域の週末天気予報
   AreaWeatherSummary? _currentRegionWeather;
@@ -110,8 +124,9 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 夫婦共有ルームの合言葉
   String _coupleRoomCode = 'family-weekend';
 
-  /// この端末の使用者（Web版は個人用me固定）
-  PartnerPick _myRole = PartnerPick.me;
+  /// このスマホの使用者（夫 or 妻。ハートを押した時点で自動識別）
+  PartnerPick _myRole = PartnerPick.husband;
+  bool _hasSelectedMyRole = false;
 
   /// 夫婦同期のステータス文字列
   String _syncStatusLabel = '確認中...';
@@ -149,6 +164,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final dateText = GeminiOutingService.formatDateRange(_targetDateRange);
     _aiSummaryComment =
         '🎪 【${_selectedRegion.label}】直近の週末（$dateText）開催イベントや、定番お出かけスポットを表示しています！';
+    _loadCustomRegions();
     _initCoupleSync();
 
     // スクロール位置を監視して「トップに戻るボタン」の表示/非表示を切り替え
@@ -333,15 +349,19 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  /// ローカル保存およびクラウド同期の初期化（Web版）
+  /// 夫婦間のローカル保存およびクラウド同期の初期化
   Future<void> _initCoupleSync() async {
     final code = await CoupleSyncService.getRoomCode();
+    final savedRole = await CoupleSyncService.getMyRole();
     var savedFavs = await CoupleSyncService.loadLocalFavorites();
     final savedTrips = await CoupleSyncService.loadLocalTrips();
     if (mounted) {
       setState(() {
         _tripPlans = savedTrips;
-        _myRole = PartnerPick.me;
+        if (savedRole != null && savedRole != PartnerPick.me) {
+          _myRole = savedRole;
+          _hasSelectedMyRole = true;
+        }
       });
     }
 
@@ -514,9 +534,84 @@ class _HomeScreenState extends State<HomeScreen> {
     await _runAiSearch(currentInput.isNotEmpty ? currentInput : null, category);
   }
 
-  /// 地域タブ（東北6県）をタップしたときの検索
+  /// 保存済みのカスタム地域一覧をSharedPreferencesから復元
+  Future<void> _loadCustomRegions() async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs.getStringList(_prefKeyCustomRegions);
+    if (keys == null || keys.isEmpty) return;
+
+    final loaded = <TohokuRegion>[];
+    for (final k in keys) {
+      final region = TohokuRegion.fromKey(k);
+      if (region != null && !loaded.contains(region)) {
+        loaded.add(region);
+      }
+    }
+    if (loaded.isEmpty || !mounted) return;
+
+    final needsRegionSwitch = !loaded.contains(_selectedRegion);
+    setState(() {
+      _customRegions = loaded;
+      if (needsRegionSwitch) {
+        _selectedRegion = loaded.first;
+        _mapCenterLatLng = LatLng(
+          _selectedRegion.centerLat,
+          _selectedRegion.centerLng,
+        );
+      }
+    });
+    if (needsRegionSwitch && !_isCurrentLocationSelected) {
+      _fetchRegionWeather(_selectedRegion);
+    }
+  }
+
+  /// カスタム地域一覧をSharedPreferencesへ保存
+  Future<void> _saveCustomRegions(List<TohokuRegion> regions) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _prefKeyCustomRegions,
+      regions.map((r) => r.name).toList(),
+    );
+  }
+
+  /// 左端の「現在地」ボタンをタップしたときのGPS取得＆現在地周辺検索
+  Future<void> _selectCurrentLocationAndSearch() async {
+    setState(() {
+      _isCurrentLocationSelected = true;
+      _anchorSpot = null;
+    });
+
+    await _fetchCurrentLocation(autoFetch: false, moveMap: true);
+    if (!mounted) return;
+
+    final loc = _currentLocation;
+    if (loc != null) {
+      final nearest = TohokuRegion.nearestTo(loc.latitude, loc.longitude);
+      setState(() {
+        _selectedRegion = nearest;
+        _mapCenterLatLng = LatLng(loc.latitude, loc.longitude);
+      });
+      final weather = await WeatherService.fetchWeekendWeather(
+        lat: loc.latitude,
+        lng: loc.longitude,
+        areaName: loc.label,
+        targetSaturday: _targetDateRange.start,
+      );
+      if (mounted && weather != null) {
+        setState(() => _currentRegionWeather = weather);
+      }
+    } else {
+      _fetchRegionWeather(_selectedRegion);
+    }
+
+    await _runAiSearch(null, _selectedCategory);
+    _fetchCoupleAiInsight();
+  }
+
+  /// 地域タブをタップしたときの検索
   Future<void> _selectRegionAndSearch(TohokuRegion region) async {
     setState(() {
+      _isCurrentLocationSelected = false;
       _selectedRegion = region;
       _anchorSpot = null;
       _mapCenterLatLng = LatLng(region.centerLat, region.centerLng);
@@ -527,6 +622,244 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     await _runAiSearch(null, _selectedCategory);
     _fetchCoupleAiInsight();
+  }
+
+  /// 「地域変更」ボタン押下時に表示する「よく行くお出かけ地域の設定」ボトムシート
+  Future<void> _showCustomizeRegionsSheet() async {
+    final selectedSet = _customRegions.toSet();
+
+    final presets = <MapEntry<String, List<TohokuRegion>>>[
+      const MapEntry('東北6県', TohokuRegion.defaultTohokuRegions),
+      MapEntry('関東7都県', TohokuRegion.regionsByGroup('関東')),
+      MapEntry('関西6府県', TohokuRegion.regionsByGroup('関西')),
+      MapEntry('中部・北陸', TohokuRegion.regionsByGroup('中部・北陸')),
+      MapEntry('中国・四国', TohokuRegion.regionsByGroup('中国・四国')),
+      MapEntry('北海道・九州沖縄', [
+        TohokuRegion.hokkaido,
+        ...TohokuRegion.regionsByGroup('九州・沖縄'),
+      ]),
+    ];
+
+    final savedList = await showModalBottomSheet<List<TohokuRegion>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            final colorScheme = Theme.of(ctx).colorScheme;
+            final orderedSelected = TohokuRegion.values
+                .where((r) => selectedSet.contains(r))
+                .toList();
+
+            return DraggableScrollableSheet(
+              initialChildSize: 0.78,
+              minChildSize: 0.5,
+              maxChildSize: 0.92,
+              expand: false,
+              builder: (_, scrollController) {
+                return Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
+                      child: Row(
+                        children: [
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '🗾 よく行くお出かけ地域の設定',
+                                  style: TextStyle(
+                                    fontSize: 16.5,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                SizedBox(height: 2),
+                                Text(
+                                  'ホーム画面のタブに並べる都道府県を自由に選べます（全国47都道府県対応）',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: ListView(
+                        controller: scrollController,
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                        children: [
+                          Text(
+                            '⚡ 地方セットで一括選択',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: presets.map((preset) {
+                              return SafeActionChip(
+                                label: Text(
+                                  preset.key,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                backgroundColor: colorScheme.primaryContainer
+                                    .withValues(alpha: 0.35),
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () {
+                                  setModalState(() {
+                                    selectedSet
+                                      ..clear()
+                                      ..addAll(preset.value);
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            '📍 都道府県を個別に選ぶ（現在 ${orderedSelected.length}件選択中）',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ...TohokuRegion.allAreaGroups.map((group) {
+                            final regions = TohokuRegion.regionsByGroup(group);
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    group,
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.bold,
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: regions.map((region) {
+                                      final isChecked =
+                                          selectedSet.contains(region);
+                                      return SafeFilterChip(
+                                        avatar: Text(
+                                          region.icon,
+                                          style: const TextStyle(fontSize: 13),
+                                        ),
+                                        label: Text(
+                                          region.label,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: isChecked
+                                                ? FontWeight.bold
+                                                : FontWeight.normal,
+                                          ),
+                                        ),
+                                        selected: isChecked,
+                                        selectedColor:
+                                            colorScheme.primaryContainer,
+                                        visualDensity: VisualDensity.compact,
+                                        onSelected: (selected) {
+                                          if (!selected &&
+                                              selectedSet.length <= 1) {
+                                            ScaffoldMessenger.of(ctx)
+                                                .clearSnackBars();
+                                            ScaffoldMessenger.of(ctx)
+                                                .showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  '最低1つの地域を選択してください',
+                                                ),
+                                                duration: Duration(seconds: 2),
+                                              ),
+                                            );
+                                            return;
+                                          }
+                                          setModalState(() {
+                                            if (selected) {
+                                              selectedSet.add(region);
+                                            } else {
+                                              selectedSet.remove(region);
+                                            }
+                                          });
+                                        },
+                                      );
+                                    }).toList(),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+                      child: Row(
+                        children: [
+                          TextButton(
+                            onPressed: () {
+                              setModalState(() {
+                                selectedSet
+                                  ..clear()
+                                  ..addAll(TohokuRegion.defaultTohokuRegions);
+                              });
+                            },
+                            child: const Text('東北6県に戻す'),
+                          ),
+                          const Spacer(),
+                          FilledButton.icon(
+                            onPressed: orderedSelected.isEmpty
+                                ? null
+                                : () => Navigator.of(ctx).pop(orderedSelected),
+                            icon: const Icon(Icons.check, size: 18),
+                            label: Text('保存して反映（${orderedSelected.length}件）'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+
+    if (savedList == null || savedList.isEmpty || !mounted) return;
+    await _saveCustomRegions(savedList);
+    final selectedStillVisible = savedList.contains(_selectedRegion);
+    setState(() {
+      _customRegions = savedList;
+    });
+    if (!selectedStillVisible && !_isCurrentLocationSelected) {
+      await _selectRegionAndSearch(savedList.first);
+    }
   }
 
   /// 期間指定ダイアログ・カレンダーピッカーを開く
@@ -667,6 +1000,12 @@ class _HomeScreenState extends State<HomeScreen> {
       targetCategory: targetCat,
       selectedRegion: _selectedRegion,
       targetDateRange: _targetDateRange,
+      searchCenterLat:
+          _isCurrentLocationSelected ? _currentLocation?.latitude : null,
+      searchCenterLng:
+          _isCurrentLocationSelected ? _currentLocation?.longitude : null,
+      mapCenterLabel:
+          _isCurrentLocationSelected ? _currentLocation?.label : null,
     );
 
     if (!mounted) return;
@@ -890,15 +1229,55 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _setMyRole(PartnerPick role) async {
     setState(() {
       _myRole = role;
+      _hasSelectedMyRole = true;
     });
     await CoupleSyncService.saveMyRole(role);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
+    final roleName = role == PartnerPick.wife ? '妻（ママ）' : '夫（パパ）';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('📱 この端末を「${role.icon} 自分用」に設定しました！'),
+        content: Text(
+          '📱 このスマホを「${role.icon} $roleName」に設定しました！ハートを押すと自動で識別されます',
+        ),
         duration: const Duration(seconds: 2),
       ),
+    );
+  }
+
+  /// Android版：初回ハート押下時に1回だけ「このスマホは夫 / 妻どちらですか？」を確認するダイアログ
+  Future<PartnerPick?> _promptMyRoleFirstTime() async {
+    return showDialog<PartnerPick>(
+      context: context,
+      builder: (dialogCtx) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Text('📱 ', style: TextStyle(fontSize: 22)),
+              Expanded(child: Text('このスマホはどちらですか？')),
+            ],
+          ),
+          content: const Text(
+            '1回選ぶだけで、今後はハート❤️を押した時点で自動的に「夫が気になる」「妻が気になる」として識別されます！\n（※画面右上からいつでも変更できます）',
+            style: TextStyle(fontSize: 13.5, height: 1.45),
+          ),
+          actionsAlignment: MainAxisAlignment.spaceEvenly,
+          actions: [
+            FilledButton.tonalIcon(
+              onPressed: () => Navigator.of(dialogCtx).pop(PartnerPick.husband),
+              icon: const Text('🙋‍♂️', style: TextStyle(fontSize: 18)),
+              label: const Text('夫（パパ）',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(dialogCtx).pop(PartnerPick.wife),
+              icon: const Text('🙋‍♀️', style: TextStyle(fontSize: 18)),
+              label: const Text('妻（ママ）',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -916,8 +1295,21 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  /// お気に入りON/OFF切り替え（Web版）
+  /// お気に入りON/OFF切り替え（ハートを押した時点で夫か妻かを自動識別！）
   Future<void> _toggleFavorite(OutingSpot target) async {
+    if (!target.isFavorite && !_hasSelectedMyRole) {
+      final chosen = await _promptMyRoleFirstTime();
+      if (chosen != null) {
+        await _setMyRole(chosen);
+      } else {
+        _hasSelectedMyRole = true;
+        await CoupleSyncService.saveMyRole(_myRole);
+      }
+    }
+
+    bool upgradedToBoth = false;
+    bool downgradedToPartner = false;
+    PartnerPick? remainingPartnerPick;
     bool wasRemovedCompletely = false;
 
     setState(() {
@@ -926,7 +1318,27 @@ class _HomeScreenState extends State<HomeScreen> {
         if (!spot.isFavorite) {
           return spot.copyWith(
             isFavorite: true,
-            pickedBy: PartnerPick.me,
+            pickedBy: _myRole,
+          );
+        } else if (spot.pickedBy != null &&
+            spot.pickedBy != _myRole &&
+            spot.pickedBy != PartnerPick.both &&
+            spot.pickedBy != PartnerPick.me) {
+          // 相手が付けていたスポットに自分もハートを押したら「💑 2人とも行きたい！」に昇格
+          upgradedToBoth = true;
+          return spot.copyWith(
+            isFavorite: true,
+            pickedBy: PartnerPick.both,
+          );
+        } else if (spot.pickedBy == PartnerPick.both) {
+          // 「2人とも」状態から自分のハートを外す場合は、相手の候補まで消さないよう相手分だけ残す
+          downgradedToPartner = true;
+          remainingPartnerPick = _myRole == PartnerPick.husband
+              ? PartnerPick.wife
+              : PartnerPick.husband;
+          return spot.copyWith(
+            isFavorite: true,
+            pickedBy: remainingPartnerPick,
           );
         } else {
           wasRemovedCompletely = true;
@@ -958,16 +1370,28 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
+    final pickBadge = updated.pickedBy ?? _myRole;
+    final String msg;
+    if (upgradedToBoth) {
+      msg = '💑 「${updated.title}」が『2人とも行きたい！』になりました！';
+    } else if (downgradedToPartner && remainingPartnerPick != null) {
+      msg =
+          '自分の行きたいを解除しました（${remainingPartnerPick!.icon} ${remainingPartnerPick!.label} として残ります）';
+    } else if (updated.isFavorite) {
+      msg = '❤️ 「${updated.title}」を【${pickBadge.icon} ${pickBadge.label}】として追加しました！';
+    } else {
+      msg = '「${updated.title}」を行きたい！リストから外しました';
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          updated.isFavorite
-              ? '❤️ 「${updated.title}」を行きたい！リストに追加しました'
-              : '「${updated.title}」を行きたい！リストから外しました',
-        ),
+        content: Text(msg),
         duration: const Duration(seconds: 2),
       ),
     );
+
+    // お気に入り変更に伴い夫婦の好みを再分析
+    _fetchCoupleAiInsight();
   }
 
   /// お気に入り画面の削除ボタンからスポットを完全に外す
@@ -991,9 +1415,10 @@ class _HomeScreenState extends State<HomeScreen> {
         duration: const Duration(seconds: 2),
       ),
     );
+    _fetchCoupleAiInsight();
   }
 
-  /// お気に入りメモを更新する
+  /// 夫婦のお気に入りステータスやメモを更新する
   Future<void> _updateFavoriteDetail(
       OutingSpot target, PartnerPick pickedBy, String note) async {
     setState(() {
@@ -1009,16 +1434,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
     await CoupleSyncService.recordSpotChange(target.id);
     await _pushAndSyncFavorites();
+
+    // メモや担当者更新に伴い夫婦の好みを再分析
+    _fetchCoupleAiInsight();
   }
 
-  /// 💮 行ったよ！思い出スタンプを更新してクラウドへ保存する
+  /// 💮 行ったよ！思い出スタンプを更新してクラウドへ保存する（案C）
   Future<void> _updateVisitedSpot(OutingSpot updated) async {
     setState(() {
       _allSpots = _allSpots.map((spot) {
         if (spot.id != updated.id) return spot;
         return updated.copyWith(
           isFavorite: true,
-          pickedBy: updated.pickedBy ?? PartnerPick.me,
+          pickedBy: updated.pickedBy ?? PartnerPick.both,
         );
       }).toList();
     });
@@ -1428,10 +1856,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   const Text(
                     '週末どこ行く？AIナビ',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.bold),
                   ),
                   Text(
-                    '地域: ${_selectedRegion.label} ｜ 期間: $dateLabel（$_dateRangePresetLabel）',
+                    '地域: ${_isCurrentLocationSelected ? "現在地（${_currentLocation?.label ?? _selectedRegion.label}）" : _selectedRegion.label} ｜ 期間: $dateLabel（$_dateRangePresetLabel）',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 11,
                       color: colorScheme.onSurfaceVariant,
@@ -1443,17 +1875,53 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          // このスマホの使用者（夫 / 妻）ワンタップ切替バッジ
+          Padding(
+            padding: const EdgeInsets.only(right: 2),
+            child: Tooltip(
+              message: 'タップで「夫 / 妻」を切替（ハート押下時に自動識別）',
+              child: SafeActionChip(
+                visualDensity: VisualDensity.compact,
+                avatar: Text(
+                  _myRole.icon,
+                  style: const TextStyle(fontSize: 13),
+                ),
+                label: Text(
+                  _myRole == PartnerPick.wife ? '妻' : '夫',
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                onPressed: () {
+                  final nextRole = _myRole == PartnerPick.husband
+                      ? PartnerPick.wife
+                      : PartnerPick.husband;
+                  _setMyRole(nextRole);
+                },
+              ),
+            ),
+          ),
           IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
             tooltip: '📅 イベント期間指定',
             onPressed: () => _showDateRangeSelectorSheet(context),
             icon: const Icon(Icons.calendar_month_outlined),
           ),
           IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
             tooltip: '🎒 持ち物チェック',
             onPressed: () => _showPackingListSheet(context),
             icon: const Icon(Icons.backpack_outlined),
           ),
           IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
             tooltip: '出発エリアの設定',
             onPressed: () => _showDepartureAreaDialog(context),
             icon: const Icon(Icons.edit_location_alt_outlined),
@@ -1547,7 +2015,7 @@ class _HomeScreenState extends State<HomeScreen> {
               label: Text('${_favoriteSpots.length}'),
               child: const Icon(Icons.favorite),
             ),
-            label: '行きたい！リスト',
+            label: '夫婦の行きたい！',
           ),
           NavigationDestination(
             icon: Badge(
@@ -1630,15 +2098,50 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                // 2. 東北6県の地域指定タブ
+                // 2. 現在地 ＋ カスタム地域タブ（＋右端に地域変更ボタン）
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
                       const Icon(Icons.place_outlined, size: 17),
                       const SizedBox(width: 4),
-                      ...TohokuRegion.values.map((region) {
-                        final isSelected = _selectedRegion == region;
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: SafeChoiceChip(
+                          avatar: _isLocating
+                              ? const SizedBox(
+                                  width: 13,
+                                  height: 13,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Icon(
+                                  Icons.my_location,
+                                  size: 15,
+                                  color: _isCurrentLocationSelected
+                                      ? colorScheme.primary
+                                      : colorScheme.onSurfaceVariant,
+                                ),
+                          label: Text(
+                            '現在地',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: _isCurrentLocationSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                          selected: _isCurrentLocationSelected,
+                          selectedColor: colorScheme.primaryContainer,
+                          visualDensity: VisualDensity.compact,
+                          onSelected: (_) => _selectCurrentLocationAndSearch(),
+                        ),
+                      ),
+                      ..._customRegions.map((region) {
+                        final isSelected =
+                            !_isCurrentLocationSelected &&
+                            _selectedRegion == region;
                         return Padding(
                           padding: const EdgeInsets.only(right: 6),
                           child: SafeChoiceChip(
@@ -1661,6 +2164,23 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         );
                       }),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 2),
+                        child: SafeActionChip(
+                          avatar: const Icon(Icons.tune, size: 15),
+                          label: const Text(
+                            '地域変更',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          backgroundColor: colorScheme.surfaceContainerHighest
+                              .withValues(alpha: 0.6),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: _showCustomizeRegionsSheet,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1844,7 +2364,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      '${_selectedRegion.label}のイベント・お出かけスポットを検索中...',
+                                      '$_activeAreaLabelのイベント・お出かけスポットを検索中...',
                                       style: const TextStyle(
                                           fontSize: 12.5,
                                           fontWeight: FontWeight.bold),
@@ -1863,7 +2383,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                // お出かけ好みAIナビ（Web版ではAPIキーが空のため非表示）
+                // 夫婦の好みAIナビ（Gemini 3.5 Flash-Lite）カード
                 if (AppApiKeys.geminiApiKey.isNotEmpty) ...[
                   _buildCoupleAiInsightCard(context),
                   const SizedBox(height: 8),
@@ -2466,19 +2986,26 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        const Text('💬 ', style: TextStyle(fontSize: 14)),
-                        Text(
-                          'Googleマップのレビュー・評価',
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue.shade900,
-                          ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('💬 ', style: TextStyle(fontSize: 14)),
+                            Text(
+                              'Googleマップのレビュー・評価',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue.shade900,
+                              ),
+                            ),
+                          ],
                         ),
-                        if (spot.googleRatingBadgeText.isNotEmpty) ...[
-                          const SizedBox(width: 6),
+                        if (spot.googleRatingBadgeText.isNotEmpty)
                           Container(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 7, vertical: 2),
@@ -2495,8 +3022,6 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                           ),
-                        ],
-                        const Spacer(),
                         InkWell(
                           onTap: () => _launchGoogleMaps(spot),
                           child: Text(
@@ -3415,19 +3940,26 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            const Text('💬 ', style: TextStyle(fontSize: 16)),
-                            Text(
-                              'Googleマップのレビュー・評価',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue.shade900,
-                              ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text('💬 ', style: TextStyle(fontSize: 16)),
+                                Text(
+                                  'Googleマップのレビュー・評価',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue.shade900,
+                                  ),
+                                ),
+                              ],
                             ),
-                            if (spot.googleRatingBadgeText.isNotEmpty) ...[
-                              const SizedBox(width: 8),
+                            if (spot.googleRatingBadgeText.isNotEmpty)
                               Container(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 2),
@@ -3444,7 +3976,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ),
                                 ),
                               ),
-                            ],
                           ],
                         ),
                         if (spot.googleReviews.isNotEmpty) ...[

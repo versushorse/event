@@ -100,6 +100,8 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                       children: [
                         const Text(
                           '夫婦の共有ボード ＆ 思い出スタンプ帳',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 14.5,
                             fontWeight: FontWeight.bold,
@@ -120,6 +122,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                             Expanded(
                               child: Text(
                                 '合言葉: ${widget.coupleRoomCode}（同期: ${widget.syncStatusLabel}）',
+                                maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontSize: 11.5,
@@ -134,16 +137,19 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   ),
                   if (widget.favoriteSpots.isNotEmpty)
                     IconButton.filledTonal(
+                      visualDensity: VisualDensity.compact,
                       tooltip: '🎰 行きたい候補からルーレット抽選！',
                       onPressed: () => _showFavoritesRouletteDialog(context),
                       icon: const Text('🎰', style: TextStyle(fontSize: 16)),
                     ),
                   IconButton.filledTonal(
+                    visualDensity: VisualDensity.compact,
                     tooltip: '今すぐ同期',
                     onPressed: widget.onTriggerSync,
                     icon: const Icon(Icons.sync, size: 18),
                   ),
                   IconButton(
+                    visualDensity: VisualDensity.compact,
                     tooltip: 'LINE等で共有',
                     onPressed: () {
                       final shareText =
@@ -164,6 +170,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                     icon: const Icon(Icons.share, size: 18),
                   ),
                   IconButton(
+                    visualDensity: VisualDensity.compact,
                     tooltip: '合言葉を変更',
                     onPressed: () => _showRoomCodeDialog(context),
                     icon: const Icon(Icons.key, size: 18),
@@ -173,13 +180,17 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               const SizedBox(height: 8),
               // このスマホが夫か妻かの設定バー（ハート押下時に自動識別）
               Container(
+                width: double.infinity,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   color: colorScheme.surface.withValues(alpha: 0.85),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Row(
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     const Text(
                       '📱 このスマホ:',
@@ -188,7 +199,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    const SizedBox(width: 8),
                     SafeChoiceChip(
                       visualDensity: VisualDensity.compact,
                       label: const Text('🙋‍♂️ 夫（パパ）',
@@ -197,7 +207,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                       onSelected: (_) =>
                           widget.onChangeMyRole?.call(PartnerPick.husband),
                     ),
-                    const SizedBox(width: 6),
                     SafeChoiceChip(
                       visualDensity: VisualDensity.compact,
                       label: const Text('🙋‍♀️ 妻（ママ）',
@@ -206,15 +215,11 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                       onSelected: (_) =>
                           widget.onChangeMyRole?.call(PartnerPick.wife),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '※❤️を押すと自動で識別',
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          color: colorScheme.onSurfaceVariant,
-                        ),
+                    Text(
+                      '※❤️を押すと自動で識別',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -548,19 +553,26 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          const Text('💬 ', style: TextStyle(fontSize: 14)),
-                          Text(
-                            'Googleマップのレビュー',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue.shade900,
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text('💬 ', style: TextStyle(fontSize: 14)),
+                              Text(
+                                'Googleマップのレビュー',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.blue.shade900,
+                                ),
+                              ),
+                            ],
                           ),
-                          if (spot.googleRatingBadgeText.isNotEmpty) ...[
-                            const SizedBox(width: 6),
+                          if (spot.googleRatingBadgeText.isNotEmpty)
                             Container(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 6, vertical: 2),
@@ -577,7 +589,6 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                                 ),
                               ),
                             ),
-                          ],
                         ],
                       ),
                       if (spot.googleReviews.isNotEmpty) ...[

@@ -66,15 +66,12 @@ class CoupleSyncService {
     await prefs.setString(_prefMyRoleKey, role.name);
   }
 
-  /// ローカルに保存された共有合言葉を取得する（Web版は他ユーザーと混ざらないよう端末ごとのランダム合言葉を自動生成）
+  /// ローカルに保存された共有合言葉を取得する（未設定ならデフォルト 'family-weekend'）
   static Future<String> getRoomCode() async {
     final prefs = await SharedPreferences.getInstance();
     var code = prefs.getString(_prefRoomKey);
     if (code == null || code.trim().isEmpty) {
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final hash = (timestamp % 1679616).toRadixString(36).padLeft(4, '0');
-      code = 'spot-$hash';
-      await prefs.setString(_prefRoomKey, code);
+      code = 'family-weekend';
     }
     return code;
   }
@@ -948,14 +945,16 @@ class CoupleSyncService {
     }
 
     final buffer = StringBuffer();
-    buffer.writeln('💖 週末どこ行く？行きたいスポット一覧');
-    buffer.writeln('🔑 合言葉: $roomCode\n');
+    buffer.writeln('💑 週末どこ行く？夫婦の行きたいスポット一覧');
+    buffer.writeln('🔑 家族合言葉: $roomCode\n');
 
     for (var i = 0; i < favorites.length; i++) {
       final spot = favorites[i];
+      final pickLabel = spot.pickedBy?.label ?? '2人とも';
       final visitedBadge = spot.isVisited ? ' 💮[行ったよ！]' : '';
       buffer.writeln('${i + 1}. ${spot.title}$visitedBadge');
       buffer.writeln('   📍 ${spot.address}');
+      buffer.writeln('   🙋 担当: $pickLabel');
       if (spot.coupleNote.isNotEmpty) {
         buffer.writeln('   💬 メモ: ${spot.coupleNote}');
       }
@@ -971,7 +970,7 @@ class CoupleSyncService {
       buffer.writeln();
     }
 
-    buffer.writeln('アプリの「行きたい！リスト」画面で合言葉「$roomCode」を入力すると共有できます！');
+    buffer.writeln('アプリの「夫婦の行きたい！」画面で合言葉「$roomCode」を入力すると同期できます！');
     return buffer.toString();
   }
 
