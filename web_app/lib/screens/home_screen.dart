@@ -3311,7 +3311,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       const Text('🌤️ ', style: TextStyle(fontSize: 13)),
                       Text(
-                        '${_currentRegionWeather!.areaName}の週末天気: ${_currentRegionWeather!.dailyForecasts.map((d) => "${d.weatherIcon} ${d.maxTemp.round()}℃/${d.minTemp.round()}℃").join(" ｜ ")}',
+                        '${_currentRegionWeather!.areaName}の週末天気: ${_currentRegionWeather!.dailyForecasts.map((d) => "${d.weatherIcon}${d.tempLabel.isNotEmpty ? ' ${d.tempLabel}' : ''}").join(" ｜ ")}',
                         style: const TextStyle(
                             fontSize: 11, fontWeight: FontWeight.bold),
                       ),

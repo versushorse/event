@@ -1,28 +1,43 @@
-// 天気予報取得サービス（Open-Meteo API による無料・高精度気象データ連携）
+// 天気予報取得サービス（気象庁 公式天気予報JSONによる商用利用可能・無料気象データ連携）
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import '../models/outing_spot.dart';
 
 /// 1日分の天気情報
 class DailyWeather {
   final DateTime date;
   final String weatherCodeLabel;
   final String weatherIcon;
-  final double maxTemp;
-  final double minTemp;
+  final double? maxTemp;
+  final double? minTemp;
   final int rainProbability;
 
   const DailyWeather({
     required this.date,
     required this.weatherCodeLabel,
     required this.weatherIcon,
-    required this.maxTemp,
-    required this.minTemp,
+    this.maxTemp,
+    this.minTemp,
     required this.rainProbability,
   });
 
-  String get shortLabel =>
-      '$weatherIcon $weatherCodeLabel ${maxTemp.round()}℃/${minTemp.round()}℃ (雨$rainProbability%)';
+  String get tempLabel {
+    if (maxTemp != null && minTemp != null) {
+      return '${maxTemp!.round()}℃/${minTemp!.round()}℃';
+    }
+    if (maxTemp != null) {
+      return '最高${maxTemp!.round()}℃';
+    }
+    if (minTemp != null) {
+      return '最低${minTemp!.round()}℃';
+    }
+    return '';
+  }
+
+  String get shortLabel => tempLabel.isNotEmpty
+      ? '$weatherIcon $weatherCodeLabel $tempLabel (雨$rainProbability%)'
+      : '$weatherIcon $weatherCodeLabel (雨$rainProbability%)';
 
   bool get isRainy => rainProbability >= 50 || weatherCodeLabel.contains('雨') || weatherCodeLabel.contains('雪');
 }
@@ -49,7 +64,16 @@ class AreaWeatherSummary {
 }
 
 class WeatherService {
-  /// 指定座標（緯度経度）の直近週末の天気を取得
+  /// 指定座標（緯度経度）に対応する都道府県の気象庁予報区コードに変換
+  static String _toJmaOfficeCode(double lat, double lng) {
+    final id = TohokuRegion.nearestTo(lat, lng).ikoyoPrefectureId;
+    if (id == 1) return '016000'; // 北海道（石狩・札幌代表）
+    if (id == 46) return '460100'; // 鹿児島県
+    if (id == 47) return '471000'; // 沖縄県（本島代表）
+    return '${id.toString().padLeft(2, '0')}0000';
+  }
+
+  /// 指定座標（緯度経度）の直近週末の天気を気象庁公式JSONから取得
   static Future<AreaWeatherSummary?> fetchWeekendWeather({
     required double lat,
     required double lng,
@@ -57,77 +81,204 @@ class WeatherService {
     DateTime? targetSaturday,
   }) async {
     try {
+      final officeCode = _toJmaOfficeCode(lat, lng);
       final uri = Uri.parse(
-        'https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lng&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Asia%2FTokyo',
+        'https://www.jma.go.jp/bosai/forecast/data/forecast/$officeCode.json',
       );
 
       final res = await http.get(uri).timeout(const Duration(seconds: 4));
       if (res.statusCode != 200) return _fallbackWeather(areaName);
 
-      final data = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
-      final daily = data['daily'] as Map<String, dynamic>?;
-      if (daily == null) return _fallbackWeather(areaName);
+      final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+      if (decoded is! List || decoded.isEmpty) {
+        return _fallbackWeather(areaName);
+      }
 
-      final timeList = daily['time'] as List<dynamic>? ?? [];
-      final codes = daily['weather_code'] as List<dynamic>? ?? [];
-      final maxTemps = daily['temperature_2m_max'] as List<dynamic>? ?? [];
-      final minTemps = daily['temperature_2m_min'] as List<dynamic>? ?? [];
-      final rains = daily['precipitation_probability_max'] as List<dynamic>? ?? [];
+      // 日付('YYYY-MM-DD')をキーにしてコード・降水確率・最高/最低気温を集約
+      final codeByDate = <String, String>{};
+      final popByDate = <String, int>{};
+      final maxByDate = <String, double>{};
+      final minByDate = <String, double>{};
+
+      // 1. 週間予報（decoded[1]）を優先読み込み
+      if (decoded.length > 1 && decoded[1] is Map<String, dynamic>) {
+        final weekly = decoded[1] as Map<String, dynamic>;
+        final tsList = weekly['timeSeries'] as List<dynamic>? ?? [];
+        if (tsList.isNotEmpty && tsList[0] is Map<String, dynamic>) {
+          final ts0 = tsList[0] as Map<String, dynamic>;
+          final times = ts0['timeDefines'] as List<dynamic>? ?? [];
+          final areas = ts0['areas'] as List<dynamic>? ?? [];
+          if (areas.isNotEmpty && areas[0] is Map<String, dynamic>) {
+            final area0 = areas[0] as Map<String, dynamic>;
+            final codes = area0['weatherCodes'] as List<dynamic>? ?? [];
+            final pops = area0['pops'] as List<dynamic>? ?? [];
+            for (var i = 0; i < times.length; i++) {
+              final dateKey = _dateKeyFromIso(times[i].toString());
+              if (dateKey == null) continue;
+              if (i < codes.length) {
+                final c = codes[i].toString().trim();
+                if (c.isNotEmpty) codeByDate[dateKey] = c;
+              }
+              if (i < pops.length) {
+                final p = int.tryParse(pops[i].toString().trim());
+                if (p != null) popByDate[dateKey] = p;
+              }
+            }
+          }
+        }
+        if (tsList.length > 1 && tsList[1] is Map<String, dynamic>) {
+          final ts1 = tsList[1] as Map<String, dynamic>;
+          final times = ts1['timeDefines'] as List<dynamic>? ?? [];
+          final areas = ts1['areas'] as List<dynamic>? ?? [];
+          if (areas.isNotEmpty && areas[0] is Map<String, dynamic>) {
+            final area0 = areas[0] as Map<String, dynamic>;
+            final mins = area0['tempsMin'] as List<dynamic>? ?? [];
+            final maxs = area0['tempsMax'] as List<dynamic>? ?? [];
+            for (var i = 0; i < times.length; i++) {
+              final dateKey = _dateKeyFromIso(times[i].toString());
+              if (dateKey == null) continue;
+              if (i < mins.length) {
+                final mn = double.tryParse(mins[i].toString().trim());
+                if (mn != null) minByDate[dateKey] = mn;
+              }
+              if (i < maxs.length) {
+                final mx = double.tryParse(maxs[i].toString().trim());
+                if (mx != null) maxByDate[dateKey] = mx;
+              }
+            }
+          }
+        }
+      }
+
+      // 2. 短期3日間予報（decoded[0]）の最新の天気・降水確率・気温で今日・明日・明後日を上書き優先する
+      if (decoded[0] is Map<String, dynamic>) {
+        final shortTerm = decoded[0] as Map<String, dynamic>;
+        final tsList = shortTerm['timeSeries'] as List<dynamic>? ?? [];
+        // 2-1. 天気コード
+        if (tsList.isNotEmpty && tsList[0] is Map<String, dynamic>) {
+          final ts0 = tsList[0] as Map<String, dynamic>;
+          final times = ts0['timeDefines'] as List<dynamic>? ?? [];
+          final areas = ts0['areas'] as List<dynamic>? ?? [];
+          if (areas.isNotEmpty && areas[0] is Map<String, dynamic>) {
+            final area0 = areas[0] as Map<String, dynamic>;
+            final codes = area0['weatherCodes'] as List<dynamic>? ?? [];
+            for (var i = 0; i < times.length; i++) {
+              final dateKey = _dateKeyFromIso(times[i].toString());
+              if (dateKey == null) continue;
+              if (i < codes.length) {
+                final c = codes[i].toString().trim();
+                if (c.isNotEmpty) codeByDate[dateKey] = c;
+              }
+            }
+          }
+        }
+        // 2-2. 6時間ごとの降水確率（各日の最大値を採用）
+        if (tsList.length > 1 && tsList[1] is Map<String, dynamic>) {
+          final ts1 = tsList[1] as Map<String, dynamic>;
+          final times = ts1['timeDefines'] as List<dynamic>? ?? [];
+          final areas = ts1['areas'] as List<dynamic>? ?? [];
+          if (areas.isNotEmpty && areas[0] is Map<String, dynamic>) {
+            final area0 = areas[0] as Map<String, dynamic>;
+            final pops = area0['pops'] as List<dynamic>? ?? [];
+            final shortPopMaxByDate = <String, int>{};
+            for (var i = 0; i < times.length; i++) {
+              final dateKey = _dateKeyFromIso(times[i].toString());
+              if (dateKey == null || i >= pops.length) continue;
+              final p = int.tryParse(pops[i].toString().trim());
+              if (p == null) continue;
+              final prev = shortPopMaxByDate[dateKey];
+              if (prev == null || p > prev) {
+                shortPopMaxByDate[dateKey] = p;
+              }
+            }
+            popByDate.addAll(shortPopMaxByDate);
+          }
+        }
+        // 2-3. 気温（T09: 最高気温 / T00: 最低気温。朝・昼発表で当日最低が省略されて最高と同値の場合はminを設定しない）
+        if (tsList.length > 2 && tsList[2] is Map<String, dynamic>) {
+          final ts2 = tsList[2] as Map<String, dynamic>;
+          final times = ts2['timeDefines'] as List<dynamic>? ?? [];
+          final areas = ts2['areas'] as List<dynamic>? ?? [];
+          if (areas.isNotEmpty && areas[0] is Map<String, dynamic>) {
+            final area0 = areas[0] as Map<String, dynamic>;
+            final temps = area0['temps'] as List<dynamic>? ?? [];
+            final shortMaxByDate = <String, double>{};
+            final shortMinByDate = <String, double>{};
+            for (var i = 0; i < times.length; i++) {
+              final timeStr = times[i].toString();
+              final dateKey = _dateKeyFromIso(timeStr);
+              if (dateKey == null || i >= temps.length) continue;
+              final val = double.tryParse(temps[i].toString().trim());
+              if (val == null) continue;
+              if (timeStr.contains('T09:')) {
+                shortMaxByDate[dateKey] = val;
+              } else if (timeStr.contains('T00:')) {
+                shortMinByDate[dateKey] = val;
+              }
+            }
+            for (final dateKey in {...shortMaxByDate.keys, ...shortMinByDate.keys}) {
+              final mx = shortMaxByDate[dateKey];
+              final mn = shortMinByDate[dateKey];
+              if (mx != null) {
+                maxByDate[dateKey] = mx;
+              }
+              if (mn != null && (mx == null || mn != mx)) {
+                minByDate[dateKey] = mn;
+              } else if (mx != null && mn == mx) {
+                minByDate.remove(dateKey);
+              }
+            }
+          }
+        }
+      }
+
+      if (codeByDate.isEmpty) return _fallbackWeather(areaName);
 
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
       final satDate = targetSaturday ?? _calculateNextSaturday(today);
       final sunDate = satDate.add(const Duration(days: 1));
+      final sortedKeys = codeByDate.keys.toList()..sort();
 
       final forecasts = <DailyWeather>[];
-
-      for (var i = 0; i < timeList.length; i++) {
-        final dateStr = timeList[i].toString();
-        final dt = DateTime.tryParse(dateStr);
+      for (final dateKey in sortedKeys) {
+        final dt = DateTime.tryParse(dateKey);
         if (dt == null) continue;
-
-        final isSat = dt.year == satDate.year && dt.month == satDate.month && dt.day == satDate.day;
-        final isSun = dt.year == sunDate.year && dt.month == sunDate.month && dt.day == sunDate.day;
-
-        // 週末（土・日）に合致する予報をピックアップ
+        final isSat = dt.year == satDate.year &&
+            dt.month == satDate.month &&
+            dt.day == satDate.day;
+        final isSun = dt.year == sunDate.year &&
+            dt.month == sunDate.month &&
+            dt.day == sunDate.day;
         if (isSat || isSun) {
-          final code = (codes[i] as num?)?.toInt() ?? 0;
-          final maxT = (maxTemps[i] as num?)?.toDouble() ?? 15.0;
-          final minT = (minTemps[i] as num?)?.toDouble() ?? 8.0;
-          final rainP = (rains[i] as num?)?.toInt() ?? 10;
-          final info = _interpretWeatherCode(code);
-
+          final info = _interpretJmaWeatherCode(codeByDate[dateKey] ?? '100');
           forecasts.add(
             DailyWeather(
               date: dt,
               weatherCodeLabel: info.label,
               weatherIcon: info.icon,
-              maxTemp: maxT,
-              minTemp: minT,
-              rainProbability: rainP,
+              maxTemp: maxByDate[dateKey],
+              minTemp: minByDate[dateKey],
+              rainProbability: popByDate[dateKey] ?? (info.isRainyDefault ? 60 : 20),
             ),
           );
         }
       }
 
-      // もし直近週末がAPIの範囲外（翌週末など先の日付）だった場合は直近2日分を抽出
-      if (forecasts.isEmpty && timeList.isNotEmpty) {
-        for (var i = 0; i < timeList.length && i < 2; i++) {
-          final dt = DateTime.tryParse(timeList[i].toString()) ?? now;
-          final code = (codes[i] as num?)?.toInt() ?? 0;
-          final maxT = (maxTemps[i] as num?)?.toDouble() ?? 15.0;
-          final minT = (minTemps[i] as num?)?.toDouble() ?? 8.0;
-          final rainP = (rains[i] as num?)?.toInt() ?? 10;
-          final info = _interpretWeatherCode(code);
-
+      // もし直近週末がAPIの範囲外だった場合は直近2日分を抽出
+      if (forecasts.isEmpty) {
+        for (var i = 0; i < sortedKeys.length && i < 2; i++) {
+          final dateKey = sortedKeys[i];
+          final dt = DateTime.tryParse(dateKey) ?? now;
+          final info = _interpretJmaWeatherCode(codeByDate[dateKey] ?? '100');
           forecasts.add(
             DailyWeather(
               date: dt,
               weatherCodeLabel: info.label,
               weatherIcon: info.icon,
-              maxTemp: maxT,
-              minTemp: minT,
-              rainProbability: rainP,
+              maxTemp: maxByDate[dateKey],
+              minTemp: minByDate[dateKey],
+              rainProbability: popByDate[dateKey] ?? (info.isRainyDefault ? 60 : 20),
             ),
           );
         }
@@ -148,9 +299,15 @@ class WeatherService {
         adviceComment: advice,
       );
     } catch (e) {
-      debugPrint('[WeatherService] 天気取得エラー: $e');
+      debugPrint('[WeatherService] 気象庁天気取得エラー: $e');
       return _fallbackWeather(areaName);
     }
+  }
+
+  static String? _dateKeyFromIso(String iso) {
+    if (iso.length < 10) return null;
+    final sub = iso.substring(0, 10);
+    return DateTime.tryParse(sub) != null ? sub : null;
   }
 
   static DateTime _calculateNextSaturday(DateTime today) {
@@ -161,43 +318,42 @@ class WeatherService {
     return today.add(Duration(days: daysUntilSat));
   }
 
-  static ({String label, String icon}) _interpretWeatherCode(int code) {
-    switch (code) {
-      case 0:
-        return (label: '快晴', icon: '☀️');
-      case 1:
-      case 2:
-        return (label: '晴れ時々曇', icon: '🌤️');
-      case 3:
-        return (label: 'くもり', icon: '☁️');
-      case 45:
-      case 48:
-        return (label: '霧', icon: '🌫️');
-      case 51:
-      case 53:
-      case 55:
-        return (label: '小雨', icon: '🌧️');
-      case 61:
-      case 63:
-      case 65:
-        return (label: '雨', icon: '🌧️');
-      case 71:
-      case 73:
-      case 75:
-      case 85:
-      case 86:
-        return (label: '雪', icon: '❄️');
-      case 80:
-      case 81:
-      case 82:
-        return (label: 'にわか雨', icon: '🌦️');
-      case 95:
-      case 96:
-      case 99:
-        return (label: '雷雨', icon: '⚡');
-      default:
-        return (label: '晴れ', icon: '☀️');
+  static ({String label, String icon, bool isRainyDefault})
+      _interpretJmaWeatherCode(String rawCode) {
+    final code = rawCode.trim();
+    if (code.startsWith('4')) {
+      return (label: '雪', icon: '❄️', isRainyDefault: true);
     }
+    if (code.startsWith('3')) {
+      if (code == '304' || code == '309' || code == '314' || code == '322') {
+        return (label: 'みぞれ・雪', icon: '❄️', isRainyDefault: true);
+      }
+      return (label: '雨', icon: '🌧️', isRainyDefault: true);
+    }
+    if (code.startsWith('2')) {
+      if (code == '200') return (label: 'くもり', icon: '☁️', isRainyDefault: false);
+      if (code == '201') {
+        return (label: 'くもり時々晴', icon: '⛅', isRainyDefault: false);
+      }
+      const rainSubCodes = [
+        '202', '203', '206', '207', '208', '210', '211', '212', '213', '214',
+        '218', '219', '220', '221', '222', '223', '224', '225', '240', '250',
+        '260', '270', '281',
+      ];
+      if (rainSubCodes.contains(code)) {
+        return (label: 'くもり時々雨', icon: '🌦️', isRainyDefault: true);
+      }
+      return (label: 'くもり', icon: '☁️', isRainyDefault: false);
+    }
+    if (code == '100') return (label: '快晴', icon: '☀️', isRainyDefault: false);
+    if (code == '101') return (label: '晴れ時々曇', icon: '🌤️', isRainyDefault: false);
+    const sunnyRainCodes = [
+      '102', '103', '106', '107', '108', '112', '113', '114', '118', '119',
+    ];
+    if (sunnyRainCodes.contains(code)) {
+      return (label: '晴れ一時雨', icon: '🌦️', isRainyDefault: true);
+    }
+    return (label: '晴れ', icon: '☀️', isRainyDefault: false);
   }
 
   static AreaWeatherSummary _fallbackWeather(String areaName) {
