@@ -54,8 +54,11 @@ class _HomeScreenState extends State<HomeScreen> {
   List<TohokuRegion> _customRegions =
       List<TohokuRegion>.from(TohokuRegion.defaultTohokuRegions);
 
-  /// 左端の「現在地」ボタンが選択されているか
-  bool _isCurrentLocationSelected = false;
+  /// ユーザーが手動で地域タブを保存済みか
+  bool _hasCustomRegionsSaved = false;
+
+  /// 左端の「現在地」ボタンが選択されているか（商用版は初回デフォルトON）
+  bool _isCurrentLocationSelected = true;
 
   /// 選択中の地域タブ（デフォルト：宮城県）
   TohokuRegion _selectedRegion = TohokuRegion.miyagi;
@@ -74,6 +77,19 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 商用版：プレミアム会員フラグ＆本日の残り無料検索回数
   bool _isPremium = false;
   int _remainingSearches = MonetizationService.freeDailySearchLimit;
+
+  static const String _prefKeyVisibleCategories = 'custom_visible_categories_v1';
+  static const String _prefKeyCustomUserGenres = 'custom_user_genres_v1';
+
+  /// ホーム画面に表示する定番ジャンル一覧（初期値：温泉・神社仏閣を除いた5ジャンル）
+  List<SpotCategory> _visibleCategories =
+      List<SpotCategory>.from(SpotCategory.defaultVisibleCategories);
+
+  /// ユーザーが自由に追加したカスタムジャンル一覧
+  List<String> _customUserGenres = [];
+
+  /// 選択中のカスタムジャンル名
+  String? _selectedCustomGenre;
 
   /// 選択中の種別フィルタ
   SpotCategory? _selectedCategory;
@@ -124,15 +140,15 @@ class _HomeScreenState extends State<HomeScreen> {
   /// ドライブ地図上で選択中の周辺検索カテゴリ
   SpotCategory? _mapAreaCategory;
 
-  /// 夫婦共有ルームの合言葉
-  String _coupleRoomCode = 'family-weekend';
+  /// 夫婦共有ルームの合言葉（初期は空文字で端末内のみ）
+  String _coupleRoomCode = '';
 
   /// このスマホの使用者（夫 or 妻。ハートを押した時点で自動識別）
   PartnerPick _myRole = PartnerPick.husband;
   bool _hasSelectedMyRole = false;
 
   /// 夫婦同期のステータス文字列
-  String _syncStatusLabel = '確認中...';
+  String _syncStatusLabel = '未設定（端末内のみ）';
 
   /// Googleマップコントローラ
   GoogleMapController? _mapController;
@@ -163,10 +179,12 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _targetDateRange = GeminiOutingService.getUpcomingWeekendRange();
     _allSpots = GeminiOutingService.getInitialSpots();
-    _selectedMapSpot = _allSpots.first;
+    _selectedMapSpot =
+        _filteredSpots.isNotEmpty ? _filteredSpots.first : _allSpots.first;
     _aiSummaryComment =
         '🗺️ 【${_selectedRegion.label}】Googleマップ＆AIによる厳選お出かけスポットを表示しています！';
     _loadCustomRegions();
+    _loadCustomGenres();
     _initMonetization();
     _initCoupleSync();
 
@@ -191,6 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _mapCenterLatLng = LatLng(cachedLoc.latitude, cachedLoc.longitude);
           _recalculateSpotDistances(cachedLoc.latitude, cachedLoc.longitude);
         });
+        _applyAutoRegionFromLocation(cachedLoc);
         _autoFetchInitialSpotsOnce(cachedLoc);
       }
     });
@@ -198,11 +217,28 @@ class _HomeScreenState extends State<HomeScreen> {
     // 2. 続けて最新の高精度GPSを取得
     _fetchCurrentLocation(autoFetch: true, moveMap: false).then((_) {
       if (_currentLocation != null) {
+        _applyAutoRegionFromLocation(_currentLocation!);
         _autoFetchInitialSpotsOnce(_currentLocation!);
       } else {
         _autoFetchInitialSpotsOnce(null);
       }
     });
+  }
+
+  /// GPS現在地から最寄り都道府県＆地方セットを自動判定して反映
+  void _applyAutoRegionFromLocation(LocationResult loc) {
+    if (!mounted) return;
+    final nearest = TohokuRegion.nearestTo(loc.latitude, loc.longitude);
+    setState(() {
+      _selectedRegion = nearest;
+      if (!_hasCustomRegionsSaved) {
+        final groupRegions = TohokuRegion.regionsByGroup(nearest.areaGroup);
+        if (groupRegions.isNotEmpty) {
+          _customRegions = groupRegions;
+        }
+      }
+    });
+    _fetchRegionWeather(nearest);
   }
 
   /// 選択地域の週末天気を取得
@@ -220,7 +256,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  /// 初回起動時に選択地域（宮城県）の直近週末イベント＆代表スポットを自動取得
+  /// 初回起動時に選択地域・現在地周辺のおすすめスポットを自動取得
   Future<void> _autoFetchInitialSpotsOnce(LocationResult? loc) async {
     if (_hasAutoFetchedSpots) return;
     _hasAutoFetchedSpots = true;
@@ -234,6 +270,12 @@ class _HomeScreenState extends State<HomeScreen> {
       selectedRegion: _selectedRegion,
       targetDateRange: _targetDateRange,
       targetCategory: null,
+      searchCenterLat:
+          _isCurrentLocationSelected ? loc?.latitude : null,
+      searchCenterLng:
+          _isCurrentLocationSelected ? loc?.longitude : null,
+      mapCenterLabel:
+          _isCurrentLocationSelected ? loc?.label : null,
     );
     if (!mounted) return;
     if (result.spots.isNotEmpty) {
@@ -369,17 +411,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     final prefs = await SharedPreferences.getInstance();
-    final hasClearedDefault = prefs.getBool('cleared_default_favs_v3') ?? false;
-    if (!hasClearedDefault) {
-      await prefs.setBool('cleared_default_favs_v3', true);
-      final isOnlyDummy = savedFavs.every((s) =>
-          s.id == 'event_jogi_stamprally_2026' ||
-          s.id == 'event_pokemon_kogei_2026' ||
-          s.id == 'gourmet_more_tohoku_marche' ||
-          s.id == 'autumn_harvest_marche_2026' ||
-          s.id == 'lake_park_dino_2026' ||
-          s.id == 'science_museum_tokubetsu');
-      if (isOnlyDummy) {
+    final hasIsolatedFavs =
+        prefs.getBool('commercial_isolated_favs_v1') ?? false;
+    if (!hasIsolatedFavs) {
+      await prefs.setBool('commercial_isolated_favs_v1', true);
+      if (code.isEmpty) {
         await CoupleSyncService.saveLocalFavorites([]);
         savedFavs = [];
       }
@@ -390,9 +426,14 @@ class _HomeScreenState extends State<HomeScreen> {
       if (savedFavs.isNotEmpty) {
         _applySyncedFavoritesToSpots(savedFavs, replaceMissingWithFalse: false);
       }
+      if (code.isEmpty) {
+        _syncStatusLabel = '未設定（端末内のみ）';
+      }
     });
 
-    _triggerCloudSync();
+    if (code.isNotEmpty) {
+      _triggerCloudSync();
+    }
   }
 
   /// 同期済みお気に入りリストを _allSpots へ反映する共通ヘルパー
@@ -440,6 +481,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// クラウド同期を実行する（相手の最新変更を受信・安全マージ）
   Future<void> _triggerCloudSync() async {
+    if (_coupleRoomCode.trim().isEmpty) {
+      if (mounted) {
+        setState(() => _syncStatusLabel = '未設定（端末内のみ）');
+      }
+      return;
+    }
     setState(() => _syncStatusLabel = '同期中...');
     final localFavs = _favoriteSpots;
     final pulled = await CoupleSyncService.pullFromCloud(
@@ -502,6 +549,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// フィルタ条件に合致するスポット一覧（選択地域や検索結果をそのまま表示）
   List<OutingSpot> get _filteredSpots {
+    final hasCustomTextQuery = _searchController.text.trim().isNotEmpty;
     return _allSpots.where((spot) {
       if (_activeSearchResultIds != null &&
           !_activeSearchResultIds!.contains(spot.id)) {
@@ -510,6 +558,16 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_selectedCategory != null &&
           spot.category != _selectedCategory &&
           spot.id != _anchorSpot?.id) {
+        return false;
+      }
+      // 特定のジャンルや検索語が指定されていない初期表示・「すべて」表示では、
+      // ジャンル設定で非表示にしている標準カテゴリ（温泉・神社仏閣など）を除外する
+      if (_selectedCategory == null &&
+          _selectedCustomGenre == null &&
+          !hasCustomTextQuery &&
+          spot.id != _anchorSpot?.id &&
+          SpotCategory.commercialCategories.contains(spot.category) &&
+          !_visibleCategories.contains(spot.category)) {
         return false;
       }
       if (_isRainOrColdMode && !spot.isRainOrColdFriendly) {
@@ -530,11 +588,337 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _selectGenreAndSearch(SpotCategory? category) async {
     final currentInput = _searchController.text.trim();
     setState(() {
+      _selectedCustomGenre = null;
       _selectedCategory = category;
       _selectedTag = null;
       _anchorSpot = null;
     });
     await _runAiSearch(currentInput.isNotEmpty ? currentInput : null, category);
+  }
+
+  /// 自由追加したカスタムジャンルチップをタップしたときの検索
+  Future<void> _selectCustomGenreAndSearch(String genre) async {
+    if (_selectedCustomGenre == genre) {
+      await _selectGenreAndSearch(null);
+      return;
+    }
+    setState(() {
+      _selectedCustomGenre = genre;
+      _selectedCategory = null;
+      _selectedTag = null;
+      _anchorSpot = null;
+    });
+    final currentInput = _searchController.text.trim();
+    final searchQuery =
+        currentInput.isNotEmpty ? '$currentInput $genre' : genre;
+    await _runAiSearch(null, null, searchQuery);
+  }
+
+  /// 保存済みの表示ジャンル＆自由追加ジャンル一覧をSharedPreferencesから復元
+  Future<void> _loadCustomGenres() async {
+    final prefs = await SharedPreferences.getInstance();
+    final catKeys = prefs.getStringList(_prefKeyVisibleCategories);
+    final userGenres = prefs.getStringList(_prefKeyCustomUserGenres);
+    if (!mounted) return;
+    setState(() {
+      if (catKeys != null) {
+        final loadedCats = <SpotCategory>[];
+        for (final k in catKeys) {
+          final cat = SpotCategory.fromKey(k);
+          if (cat != null &&
+              SpotCategory.commercialCategories.contains(cat) &&
+              !loadedCats.contains(cat)) {
+            loadedCats.add(cat);
+          }
+        }
+        _visibleCategories = loadedCats;
+      }
+      if (userGenres != null) {
+        _customUserGenres =
+            userGenres.where((g) => g.trim().isNotEmpty).toList();
+      }
+    });
+  }
+
+  /// 表示ジャンル＆自由追加ジャンル一覧をSharedPreferencesへ保存
+  Future<void> _saveCustomGenres(
+    List<SpotCategory> categories,
+    List<String> userGenres,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _prefKeyVisibleCategories,
+      categories.map((c) => c.name).toList(),
+    );
+    await prefs.setStringList(_prefKeyCustomUserGenres, userGenres);
+  }
+
+  /// 「ジャンル追加」ボタン押下時に表示するジャンルカスタマイズボトムシート
+  Future<void> _showCustomizeGenresSheet() async {
+    final selectedCats = _visibleCategories.toSet();
+    final activeCustomGenres = List<String>.from(_customUserGenres);
+    final addController = TextEditingController();
+
+    const presetSuggestions = <String>[
+      '☕ カフェ・スイーツ',
+      '🐠 水族館・動物園',
+      '🏕️ キャンプ・BBQ',
+      '🛍️ ショッピングモール',
+      '🚗 道の駅',
+    ];
+
+    final result = await showModalBottomSheet<
+        ({List<SpotCategory> categories, List<String> customGenres})>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            final colorScheme = Theme.of(ctx).colorScheme;
+            final allCustomOptions = <String>[
+              ...presetSuggestions,
+              ...activeCustomGenres.where((g) => !presetSuggestions.contains(g)),
+            ];
+
+            void addNewGenre() {
+              final text = addController.text.trim();
+              if (text.isEmpty) return;
+              setModalState(() {
+                if (!activeCustomGenres.contains(text)) {
+                  activeCustomGenres.add(text);
+                }
+                addController.clear();
+              });
+            }
+
+            final orderedCats = SpotCategory.commercialCategories
+                .where((c) => selectedCats.contains(c))
+                .toList();
+
+            return DraggableScrollableSheet(
+              initialChildSize: 0.78,
+              minChildSize: 0.5,
+              maxChildSize: 0.92,
+              expand: false,
+              builder: (_, scrollController) {
+                return Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
+                      child: Row(
+                        children: [
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '🏷️ お出かけジャンルの追加・編集',
+                                  style: TextStyle(
+                                    fontSize: 16.5,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                SizedBox(height: 2),
+                                Text(
+                                  '好きなジャンルを自由に追加したり、温泉・神社仏閣などの表示を切り替えられます',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: ListView(
+                        controller: scrollController,
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                        children: [
+                          Text(
+                            '✨ 自由なキーワードでジャンルを追加',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: addController,
+                                  onSubmitted: (_) => addNewGenre(),
+                                  decoration: const InputDecoration(
+                                    hintText: '例: カフェ、ラーメン、水族館、道の駅...',
+                                    isDense: true,
+                                    border: OutlineInputBorder(),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              FilledButton.tonalIcon(
+                                onPressed: addNewGenre,
+                                icon: const Icon(Icons.add, size: 18),
+                                label: const Text('追加'),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          const Text(
+                            '📌 定番ジャンル（温泉・神社仏閣のON/OFFもここで切替）',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children:
+                                SpotCategory.commercialCategories.map((cat) {
+                              final isChecked = selectedCats.contains(cat);
+                              return SafeFilterChip(
+                                avatar: Text(cat.icon,
+                                    style: const TextStyle(fontSize: 13)),
+                                label: Text(
+                                  cat.label,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: isChecked
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                ),
+                                selected: isChecked,
+                                selectedColor: colorScheme.primaryContainer,
+                                visualDensity: VisualDensity.compact,
+                                onSelected: (selected) {
+                                  setModalState(() {
+                                    if (selected) {
+                                      selectedCats.add(cat);
+                                    } else {
+                                      selectedCats.remove(cat);
+                                    }
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                          const SizedBox(height: 16),
+                          const Text(
+                            '💡 おすすめ追加候補 ＆ 自由追加ジャンル',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: allCustomOptions.map((genre) {
+                              final isChecked =
+                                  activeCustomGenres.contains(genre);
+                              return SafeFilterChip(
+                                avatar: const Text('✨',
+                                    style: TextStyle(fontSize: 12)),
+                                label: Text(
+                                  genre,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: isChecked
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                ),
+                                selected: isChecked,
+                                selectedColor: colorScheme.primaryContainer,
+                                visualDensity: VisualDensity.compact,
+                                onSelected: (selected) {
+                                  setModalState(() {
+                                    if (selected) {
+                                      if (!activeCustomGenres.contains(genre)) {
+                                        activeCustomGenres.add(genre);
+                                      }
+                                    } else {
+                                      activeCustomGenres.remove(genre);
+                                    }
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+                      child: Row(
+                        children: [
+                          TextButton(
+                            onPressed: () {
+                              setModalState(() {
+                                selectedCats
+                                  ..clear()
+                                  ..addAll(
+                                      SpotCategory.defaultVisibleCategories);
+                                activeCustomGenres.clear();
+                              });
+                            },
+                            child: const Text('初期状態に戻す'),
+                          ),
+                          const Spacer(),
+                          FilledButton.icon(
+                            onPressed: () => Navigator.of(ctx).pop((
+                              categories: orderedCats,
+                              customGenres: activeCustomGenres,
+                            )),
+                            icon: const Icon(Icons.check, size: 18),
+                            label: Text(
+                              '保存して反映（${orderedCats.length + activeCustomGenres.length}件）',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+
+    addController.dispose();
+    if (result == null || !mounted) return;
+    await _saveCustomGenres(result.categories, result.customGenres);
+
+    final needResetCat = _selectedCategory != null &&
+        !result.categories.contains(_selectedCategory);
+    final needResetCustom = _selectedCustomGenre != null &&
+        !result.customGenres.contains(_selectedCustomGenre);
+    setState(() {
+      _visibleCategories = result.categories;
+      _customUserGenres = result.customGenres;
+      if (needResetCat) _selectedCategory = null;
+      if (needResetCustom) _selectedCustomGenre = null;
+    });
+    if (needResetCat || needResetCustom) {
+      await _selectGenreAndSearch(null);
+    }
   }
 
   /// 保存済みのカスタム地域一覧をSharedPreferencesから復元
@@ -554,6 +938,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final needsRegionSwitch = !loaded.contains(_selectedRegion);
     setState(() {
+      _hasCustomRegionsSaved = true;
       _customRegions = loaded;
       if (needsRegionSwitch) {
         _selectedRegion = loaded.first;
@@ -939,6 +1324,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _runAiSearch([
     String? presetQuery,
     SpotCategory? explicitCategory,
+    String? overrideQuery,
   ]) async {
     if (!await _consumeSearchQuotaOrShowAd()) return;
 
@@ -955,9 +1341,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final currentFavs = List<OutingSpot>.from(_favoriteSpots);
     final targetCat = explicitCategory ?? _selectedCategory;
+    final rawQuery = overrideQuery ??
+        (_selectedCustomGenre != null && _searchController.text.trim().isEmpty
+            ? _selectedCustomGenre!
+            : _searchController.text);
 
     final result = await GeminiOutingService.searchWithAi(
-      query: _searchController.text,
+      query: rawQuery,
       departureArea: _departureArea,
       currentSpots: _allSpots,
       userLat: _currentLocation?.latitude,
@@ -1536,7 +1926,7 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Row(
                 children: [
                   Text('🎰 ', style: TextStyle(fontSize: 24)),
-                  Expanded(child: Text('週末どこ行く？おみくじルーレット')),
+                  Expanded(child: Text('おでかけナビ おみくじルーレット')),
                 ],
               ),
               content: Column(
@@ -1830,11 +2220,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '週末どこ行く？AIナビ',
+                    'おでかけナビ',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                   ),
                   Text(
                     'エリア: ${_isCurrentLocationSelected ? "現在地（${_currentLocation?.label ?? _selectedRegion.label}）" : _selectedRegion.label} ｜ ${_isPremium ? "👑 プレミアム" : "🔍 無料検索 残り$_remainingSearches回"}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 11,
                       color: colorScheme.onSurfaceVariant,
@@ -1874,6 +2268,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           IconButton(
+            visualDensity: VisualDensity.compact,
             tooltip: '👑 プラン・広告設定',
             onPressed: _openPremiumSheet,
             icon: Icon(
@@ -1884,11 +2279,13 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           IconButton(
+            visualDensity: VisualDensity.compact,
             tooltip: '🎒 持ち物チェック',
             onPressed: () => _showPackingListSheet(context),
             icon: const Icon(Icons.backpack_outlined),
           ),
           IconButton(
+            visualDensity: VisualDensity.compact,
             tooltip: '出発エリアの設定',
             onPressed: () => _showDepartureAreaDialog(context),
             icon: const Icon(Icons.edit_location_alt_outlined),
@@ -2178,13 +2575,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 const SizedBox(height: 6),
 
-                // 4. メイン7大ジャンル検索チップ（Google Places主軸）
+                // 4. メインジャンル検索チップ（初期は5大ジャンル＋自由追加・ON/OFF切替対応）
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      ...SpotCategory.commercialCategories.map((cat) {
-                        final isSelected = _selectedCategory == cat;
+                      ..._visibleCategories.map((cat) {
+                        final isSelected = _selectedCustomGenre == null &&
+                            _selectedCategory == cat;
                         return Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: SafeChoiceChip(
@@ -2211,12 +2609,51 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         );
                       }),
+                      ..._customUserGenres.map((genre) {
+                        final isSelected = _selectedCustomGenre == genre;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: SafeChoiceChip(
+                            avatar: const Text('✨',
+                                style: TextStyle(fontSize: 14)),
+                            label: Text(
+                              genre,
+                              style: TextStyle(
+                                fontWeight: isSelected
+                                    ? FontWeight.bold
+                                    : FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
+                            selected: isSelected,
+                            selectedColor: colorScheme.primaryContainer,
+                            onSelected: (_) =>
+                                _selectCustomGenreAndSearch(genre),
+                          ),
+                        );
+                      }),
                       SafeChoiceChip(
                         label:
                             const Text('すべて', style: TextStyle(fontSize: 12.5)),
-                        selected:
-                            _selectedCategory == null && _selectedTag == null,
+                        selected: _selectedCategory == null &&
+                            _selectedCustomGenre == null &&
+                            _selectedTag == null,
                         onSelected: (_) => _selectGenreAndSearch(null),
+                      ),
+                      const SizedBox(width: 6),
+                      SafeActionChip(
+                        avatar: const Icon(Icons.add_circle_outline, size: 15),
+                        label: const Text(
+                          'ジャンル追加',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        backgroundColor: colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.6),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: _showCustomizeGenresSheet,
                       ),
                     ],
                   ),
@@ -2423,7 +2860,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     final slotIndex = ((index + 1) ~/ 4) - 1;
                     return InFeedNativeAdCard(
                       slotIndex: slotIndex,
-                      regionLabel: _activeAreaLabel,
+                      regionLabel: _selectedRegion.label,
                       onOpenAffiliateUrl: _launchWebUrl,
                       onOpenPremium: _openPremiumSheet,
                     );
@@ -2506,34 +2943,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        const Text(
-                          '夫婦の好みAIナビ',
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF880E4F),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: Colors.pink.shade100,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text(
-                            'Flash-Lite',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFFAD1457),
-                            ),
-                          ),
-                        ),
-                      ],
+                    const Text(
+                      '夫婦の好みAIナビ',
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF880E4F),
+                      ),
                     ),
                     Text(
                       favCount > 0
@@ -2654,7 +3070,7 @@ class _HomeScreenState extends State<HomeScreen> {
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 2),
               child: Text(
-                'お気に入り（❤️）を増やすと、Gemini 3.5 Flash-Lite が好みを学習して、ぴったりなお出かけスポットを提案します！',
+                'お気に入り（❤️）を増やすと、AIが好みを学習して、ぴったりなお出かけスポットを提案します！',
                 style: TextStyle(fontSize: 12, color: Colors.black54),
               ),
             ),
@@ -2988,36 +3404,50 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('💬 ', style: TextStyle(fontSize: 14)),
-                        Text(
-                          'Googleマップのレビュー・評価',
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue.shade900,
+                        Expanded(
+                          child: Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Text('💬 ',
+                                      style: TextStyle(fontSize: 14)),
+                                  Text(
+                                    'Googleマップのレビュー・評価',
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.blue.shade900,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (spot.googleRatingBadgeText.isNotEmpty)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber.shade100,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    spot.googleRatingBadgeText,
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.brown.shade900,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
-                        if (spot.googleRatingBadgeText.isNotEmpty) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 7, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.amber.shade100,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              spot.googleRatingBadgeText,
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.brown.shade900,
-                              ),
-                            ),
-                          ),
-                        ],
-                        const Spacer(),
+                        const SizedBox(width: 6),
                         InkWell(
                           onTap: () => _launchGoogleMaps(spot),
                           child: Text(
@@ -3094,23 +3524,36 @@ class _HomeScreenState extends State<HomeScreen> {
                   onEditTap: () => _showQuickVisitedDialog(context, spot),
                 ),
 
-              // 立ち寄り先（近隣の温泉・神社等）を地図で探すショートカットボタン
+              // 立ち寄り先（食事 ⇄ 観光地・公園・屋内スポット連動）を地図で探すショートカットボタン
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: SizedBox(
                   width: double.infinity,
-                  child: FilledButton.tonalIcon(
-                    onPressed: () =>
-                        _jumpToMapAndSearchNearby(spot, SpotCategory.onsen),
-                    style: FilledButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                    ),
-                    icon: const Icon(Icons.travel_explore, size: 17),
-                    label: const Text(
-                      '♨️⛩️ この周辺の温泉・神社・立ち寄り先を地図で探す',
-                      style:
-                          TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                    ),
+                  child: Builder(
+                    builder: (context) {
+                      final isDiningSpot =
+                          spot.category == SpotCategory.dining ||
+                              spot.category == SpotCategory.gourmet;
+                      return FilledButton.tonalIcon(
+                        onPressed: () => _jumpToMapAndSearchNearby(
+                          spot,
+                          isDiningSpot
+                              ? SpotCategory.tourism
+                              : SpotCategory.dining,
+                        ),
+                        style: FilledButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        icon: const Icon(Icons.travel_explore, size: 17),
+                        label: Text(
+                          isDiningSpot
+                              ? '📸🌳 この周辺の観光地・公園・屋内スポットを地図で探す'
+                              : '🍽️ この周辺のランチ・食事処を地図で探す',
+                          style: const TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),
@@ -3325,7 +3768,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           decoration: InputDecoration(
                             hintText: _anchorSpot != null
                                 ? '「${_anchorSpot!.title}」周辺で検索...'
-                                : 'この地図周辺で検索（例：温泉、神社、公園）',
+                                : 'この地図周辺で検索（例：ランチ、公園、カフェ）',
                             isDense: true,
                             contentPadding: const EdgeInsets.symmetric(
                                 horizontal: 8, vertical: 8),
@@ -3421,13 +3864,12 @@ class _HomeScreenState extends State<HomeScreen> {
                               _isSearchingAi ? null : _clearMapAreaCategory,
                         ),
                       ),
-                    _buildMapGenreChip(SpotCategory.dining, '🍽️ 周辺の食事処・ランチ'),
-                    _buildMapGenreChip(SpotCategory.tourism, '📸 周辺の観光地・名所'),
-                    _buildMapGenreChip(SpotCategory.onsen, '♨️ 周辺の温泉・銭湯'),
-                    _buildMapGenreChip(SpotCategory.sightseeing, '⛩️ 周辺の神社仏閣'),
-                    _buildMapGenreChip(SpotCategory.park, '🏃 周辺の大きな公園'),
-                    _buildMapGenreChip(SpotCategory.smallPark, '🌳 周辺の小さな公園'),
-                    _buildMapGenreChip(SpotCategory.indoor, '🏛️ 周辺の屋内施設'),
+                    ..._visibleCategories.map(
+                      (cat) => _buildMapGenreChip(
+                        cat,
+                        '${cat.icon} 周辺の${cat.label}',
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -3906,19 +4348,27 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            const Text('💬 ', style: TextStyle(fontSize: 16)),
-                            Text(
-                              'Googleマップのレビュー・評価',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue.shade900,
-                              ),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text('💬 ',
+                                    style: TextStyle(fontSize: 16)),
+                                Text(
+                                  'Googleマップのレビュー・評価',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue.shade900,
+                                  ),
+                                ),
+                              ],
                             ),
-                            if (spot.googleRatingBadgeText.isNotEmpty) ...[
-                              const SizedBox(width: 8),
+                            if (spot.googleRatingBadgeText.isNotEmpty)
                               Container(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 2),
@@ -3935,7 +4385,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ),
                                 ),
                               ),
-                            ],
                           ],
                         ),
                         if (spot.googleReviews.isNotEmpty) ...[
@@ -3995,77 +4444,63 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 4),
                   ],
 
-                  // このスポット周辺の立ち寄り先をワンタップで地図検索できるボックス
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.teal.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.teal.shade200),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          '🗺️ ついでに寄れる！この周辺の立ち寄りスポットを地図で探す',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 13),
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            SafeActionChip(
-                              label: const Text('🍽️ 近くの食事処・ランチ',
-                                  style: TextStyle(fontSize: 12)),
-                              onPressed: () {
-                                Navigator.of(sheetContext).pop();
-                                _jumpToMapAndSearchNearby(
-                                    spot, SpotCategory.dining);
-                              },
-                            ),
-                            SafeActionChip(
-                              label: const Text('📸 近くの観光地・名所',
-                                  style: TextStyle(fontSize: 12)),
-                              onPressed: () {
-                                Navigator.of(sheetContext).pop();
-                                _jumpToMapAndSearchNearby(
-                                    spot, SpotCategory.tourism);
-                              },
-                            ),
-                            SafeActionChip(
-                              label: const Text('♨️ 近くの温泉・銭湯',
-                                  style: TextStyle(fontSize: 12)),
-                              onPressed: () {
-                                Navigator.of(sheetContext).pop();
-                                _jumpToMapAndSearchNearby(
-                                    spot, SpotCategory.onsen);
-                              },
-                            ),
-                            SafeActionChip(
-                              label: const Text('⛩️ 近くの神社仏閣',
-                                  style: TextStyle(fontSize: 12)),
-                              onPressed: () {
-                                Navigator.of(sheetContext).pop();
-                                _jumpToMapAndSearchNearby(
-                                    spot, SpotCategory.sightseeing);
-                              },
-                            ),
-                            SafeActionChip(
-                              label: const Text('🏃 近くの大きな公園',
-                                  style: TextStyle(fontSize: 12)),
-                              onPressed: () {
-                                Navigator.of(sheetContext).pop();
-                                _jumpToMapAndSearchNearby(
-                                    spot, SpotCategory.park);
-                              },
-                            ),
+                  // このスポット周辺の立ち寄り先（食事 ⇄ 観光地・公園・屋内スポット連動）をワンタップで地図検索できるボックス
+                  Builder(
+                    builder: (context) {
+                      final isDiningSpot =
+                          spot.category == SpotCategory.dining ||
+                              spot.category == SpotCategory.gourmet;
+                      const activityOptions = [
+                        (SpotCategory.tourism, '📸 近くの観光地・名所'),
+                        (SpotCategory.park, '🏃 近くの大きな公園'),
+                        (SpotCategory.indoor, '🏛️ 近くの屋内スポット'),
+                        (SpotCategory.smallPark, '🌳 近くの小さな公園'),
+                      ];
+                      final stopoverOptions = isDiningSpot
+                          ? activityOptions
+                          : [
+                              (SpotCategory.dining, '🍽️ 近くの食事処・ランチ'),
+                              ...activityOptions.where(
+                                (opt) => opt.$1 != spot.category,
+                              ),
+                            ];
 
+                      return Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.teal.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.teal.shade200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              isDiningSpot
+                                  ? '🗺️ 食後に寄れる！この周辺の観光地・公園・屋内スポット'
+                                  : '🗺️ 前後に寄れる！この周辺の食事処・立ち寄りスポット',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: stopoverOptions.map((opt) {
+                                return SafeActionChip(
+                                  label: Text(opt.$2,
+                                      style: const TextStyle(fontSize: 12)),
+                                  onPressed: () {
+                                    Navigator.of(sheetContext).pop();
+                                    _jumpToMapAndSearchNearby(spot, opt.$1);
+                                  },
+                                );
+                              }).toList(),
+                            ),
                           ],
                         ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
                   const SizedBox(height: 14),
                   Container(
@@ -4121,7 +4556,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                       fontWeight: FontWeight.w600)),
                               backgroundColor: Colors.orange.shade50,
                               onPressed: () => _launchWebUrl(
-                                AffiliateLinkBuilder.buildJalanUrl(spot.title),
+                                AffiliateLinkBuilder.buildJalanUrl(
+                                    '${spot.address} ${spot.title}'),
                               ),
                             ),
                             SafeActionChip(
@@ -4143,7 +4579,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               backgroundColor: Colors.red.shade50,
                               onPressed: () => _launchWebUrl(
                                 AffiliateLinkBuilder.buildRakutenTravelUrl(
-                                    spot.title),
+                                    '${spot.address} ${spot.title}'),
                               ),
                             ),
                             SafeActionChip(

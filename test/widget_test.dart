@@ -8,6 +8,7 @@ import 'package:weekend_outing/services/gemini_service.dart';
 import 'package:weekend_outing/services/location_service.dart';
 import 'package:weekend_outing/services/monetization_service.dart';
 import 'package:weekend_outing/services/sync_service.dart';
+import 'package:weekend_outing/utils/shift_jis_encoder.dart';
 import 'package:weekend_outing/widgets/safe_chips.dart';
 import 'package:weekend_outing/widgets/visited_memory_widgets.dart';
 
@@ -24,14 +25,19 @@ void main() {
     await tester.pumpAndSettle();
 
     // アプリタイトルと東北地域タブ・Google Places主軸の常設ジャンルが表示されていることを確認
-    expect(find.text('週末どこ行く？AIナビ'), findsOneWidget);
+    expect(find.text('おでかけナビ'), findsOneWidget);
     expect(find.text('宮城県'), findsWidgets);
     expect(find.text('山形県'), findsWidgets);
     expect(find.text('岩手県'), findsWidgets);
     expect(find.text('地元グルメ・食事処'), findsWidgets);
     expect(find.text('観光地・名所'), findsWidgets);
     expect(find.text('大きな公園（小学生）'), findsWidgets);
-    expect(find.text('温泉・日帰り銭湯'), findsWidgets);
+    expect(find.text('屋内スポット'), findsWidgets);
+    expect(find.text('小さな公園'), findsWidgets);
+    expect(find.text('ジャンル追加'), findsOneWidget);
+    // 初期表示から温泉・神社仏閣は除外されていることを確認（「ジャンル追加」から再ON可能）
+    expect(find.text('温泉・日帰り銭湯'), findsNothing);
+    expect(find.text('神社仏閣'), findsNothing);
 
     // 現在地ボタン（左端）と地域変更ボタン（右端）が表示されていることを確認
     expect(find.text('現在地'), findsOneWidget);
@@ -266,8 +272,18 @@ void main() {
     );
   });
 
-  test('商用版：常設7ジャンル定義＆Google検索・アフィリエイトURL生成テスト', () {
+  test('商用版：常設7ジャンル定義＆初期5ジャンル（温泉・神社仏閣除外）＆Google検索・アフィリエイトURL生成テスト', () {
     expect(SpotCategory.commercialCategories.length, 7);
+    expect(SpotCategory.defaultVisibleCategories.length, 5);
+    expect(
+      SpotCategory.defaultVisibleCategories.contains(SpotCategory.onsen),
+      isFalse,
+    );
+    expect(
+      SpotCategory.defaultVisibleCategories.contains(SpotCategory.sightseeing),
+      isFalse,
+    );
+    expect(SpotCategory.fromKey('dining'), SpotCategory.dining);
     expect(
       SpotCategory.commercialCategories.contains(SpotCategory.event),
       isFalse,
@@ -284,6 +300,27 @@ void main() {
     expect(
       AffiliateLinkBuilder.buildJalanUrl('松島 温泉'),
       contains('jalan.net'),
+    );
+    expect(
+      ShiftJisEncoder.encodeUriComponent('秋保温泉'),
+      '%8F%48%95%DB%89%B7%90%F2',
+    );
+    expect(
+      AffiliateLinkBuilder.buildJalanUrl('秋保温泉'),
+      contains('%258F%2548%2595%25DB%2589%25B7%2590%25F2'),
+    );
+    expect(
+      AffiliateLinkBuilder.normalizeTravelKeyword('宮城・仙台・泉エリア 家族 温泉'),
+      '仙台 温泉',
+    );
+    expect(
+      AffiliateLinkBuilder.normalizeTravelKeyword(
+          '宮城県柴田郡川崎町小野 国営みちのく杜の湖畔公園'),
+      '宮城県 川崎町',
+    );
+    expect(
+      AffiliateLinkBuilder.normalizeTravelKeyword('秋保温泉'),
+      '秋保温泉',
     );
     expect(
       AffiliateLinkBuilder.buildAsoviewUrl('仙台 水族館'),

@@ -449,7 +449,7 @@ Future<void> showPremiumPlanSheet(
                   ),
                   const _BenefitRow(
                     icon: '🔍',
-                    title: 'Googleスポット＆Gemini AI検索 無制限',
+                    title: 'Googleスポット＆AI検索 無制限',
                     desc: '無料枠（1日${MonetizationService.freeDailySearchLimit}回）を気にせず何度でも検索・再提案',
                   ),
                   const _BenefitRow(

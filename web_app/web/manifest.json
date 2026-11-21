@@ -1,11 +1,11 @@
 {
-    "name": "週末どこ行く？AIナビ",
-    "short_name": "週末AIナビ",
+    "name": "おでかけナビ",
+    "short_name": "おでかけナビ",
     "start_url": "./",
     "display": "standalone",
     "background_color": "#FDF4E2",
     "theme_color": "#FDF4E2",
-    "description": "東北6県のお出かけスポット・イベント・ドライブ計画をAIがサポートする週末ナビ",
+    "description": "全国のお出かけスポット・イベント・ドライブ計画をサポートするおでかけナビ",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

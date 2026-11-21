@@ -159,6 +159,23 @@ enum SpotCategory {
         smallPark,
         sightseeing,
       ];
+
+  /// ホーム画面の初期表示ジャンル（「温泉・日帰り銭湯」と「神社仏閣」を除いた5ジャンル）
+  static List<SpotCategory> get defaultVisibleCategories => const [
+        dining,
+        tourism,
+        park,
+        indoor,
+        smallPark,
+      ];
+
+  /// enum名から復元
+  static SpotCategory? fromKey(String key) {
+    for (final c in values) {
+      if (c.name == key) return c;
+    }
+    return null;
+  }
 }
 
 /// 夫婦のお気に入り傾向からGemini 3.5 Flash-Liteが導き出したパーソナライズAI分析結果
@@ -988,7 +1005,14 @@ class OutingSpot {
       title: json['title'] as String? ?? '',
       subtitle: json['subtitle'] as String? ?? '',
       category: category,
-      tags: tags.isEmpty ? [SpotTag.food, SpotTag.kids] : tags,
+      tags: tags.isEmpty
+          ? (category == SpotCategory.park
+              ? [SpotTag.kids]
+              : (category == SpotCategory.dining ||
+                      category == SpotCategory.gourmet
+                  ? [SpotTag.food]
+                  : [SpotTag.baby]))
+          : tags,
       driveMinutes: (json['driveMinutes'] as num?)?.toInt() ?? 60,
       distanceKm: (json['distanceKm'] as num?)?.toDouble() ?? 30.0,
       scheduleText: json['scheduleText'] as String? ?? '',

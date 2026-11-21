@@ -157,7 +157,6 @@ class GeminiOutingService {
         category: SpotCategory.onsen,
         tags: const [
           SpotTag.onsen,
-          SpotTag.kids,
           SpotTag.freeParking,
           SpotTag.food,
         ],
@@ -230,7 +229,7 @@ class GeminiOutingService {
         subtitle: '小学生の理科・実験好きが夢中になる参加体験型サイエンスミュージアム',
         category: SpotCategory.indoor,
         tags: const [
-          SpotTag.kids,
+          SpotTag.toddler,
           SpotTag.indoor,
           SpotTag.freeParking,
         ],
@@ -340,7 +339,7 @@ class GeminiOutingService {
         tags: const [
           SpotTag.food,
           SpotTag.freeParking,
-          SpotTag.kids,
+          SpotTag.baby,
         ],
         driveMinutes: 45,
         distanceKm: 27.8,
@@ -947,8 +946,8 @@ class GeminiOutingService {
           ];
         } else {
           searchQueries = [
-            '$queryPrefix 大型公園 科学館 水族館 日帰り温泉',
-            '$queryPrefix 道の駅 神社 観光スポット 家族',
+            '$queryPrefix 大型公園 科学館 水族館 遊び場 家族',
+            '$queryPrefix 観光スポット 名所 道の駅 人気ランチ',
           ];
         }
         break;
@@ -1135,8 +1134,14 @@ class GeminiOutingService {
       }
 
       // カテゴリとタグの決定
-      final SpotCategory category =
-          targetCategory ?? _guessSpotCategory(rawTitle, editorial ?? '');
+      final rawTypes = raw['types'] as List<dynamic>? ?? [];
+      final placeTypes = rawTypes.map((e) => e.toString()).toList();
+      final SpotCategory category = targetCategory ??
+          _guessSpotCategory(
+            rawTitle,
+            editorial ?? '',
+            placeTypes: placeTypes,
+          );
 
       // おすすめポイント（Googleマップのレビューとは分離し、スポット自体の魅力・特徴・設備を表示）
       final points = <String>[];
@@ -1168,8 +1173,13 @@ class GeminiOutingService {
         }
       }
 
+      final titleAndDesc = '$rawTitle ${editorial ?? ''}';
       final tags = <SpotTag>{};
       if (hasFreeParking) tags.add(SpotTag.freeParking);
+      if (titleAndDesc.contains('アスレチック') ||
+          titleAndDesc.contains('遊具')) {
+        tags.add(SpotTag.kids);
+      }
       if (category == SpotCategory.park) {
         tags.add(SpotTag.kids);
         tags.add(SpotTag.nature);
@@ -1178,7 +1188,11 @@ class GeminiOutingService {
         tags.add(SpotTag.nature);
       } else if (category == SpotCategory.indoor) {
         tags.add(SpotTag.indoor);
-        tags.add(SpotTag.kids);
+        if (_isCommercialIndoorFacility(titleAndDesc)) {
+          tags.add(SpotTag.baby);
+        } else {
+          tags.add(SpotTag.toddler);
+        }
       } else if (category == SpotCategory.smallPark) {
         tags.add(SpotTag.nature);
         tags.add(SpotTag.freeEntry);
@@ -1187,11 +1201,10 @@ class GeminiOutingService {
         tags.add(SpotTag.baby);
       } else if (category == SpotCategory.sightseeing) {
         tags.add(SpotTag.baby);
-      } else if (category == SpotCategory.dining) {
+      } else if (category == SpotCategory.dining ||
+          category == SpotCategory.gourmet) {
         tags.add(SpotTag.food);
-        tags.add(SpotTag.kids);
-      } else if (category == SpotCategory.gourmet) {
-        tags.add(SpotTag.food);
+        tags.add(SpotTag.baby);
       }
 
       final websiteUri = raw['websiteUri'] as String?;
@@ -1329,7 +1342,7 @@ $spotSummaries
                   if (text != null && text.trim().isNotEmpty) {
                     return AiSearchResult(
                       aiSummaryComment:
-                          '🤖 【Gemini AI ナビ（$areaLabel / ${spots.length}件ヒット）】\n${text.trim()}',
+                          '🤖 【おでかけナビ（$areaLabel / ${spots.length}件ヒット）】\n${text.trim()}',
                       spots: spots,
                       isLiveAi: true,
                     );
@@ -1356,7 +1369,7 @@ $spotSummaries
       return CouplePreferenceAiInsight(
         preferenceSummary: 'お気に入り未登録',
         recommendationText:
-            '気になるスポットの「❤️」を押すと、Geminiがおふたりの好み（温泉・自然・食事等）を自動分析し、${currentRegion.label}のおすすめ巡り方を提案します！',
+            '気になるスポットの「❤️」を押すと、AIがおふたりの好み（自然・公園・食事等）を自動分析し、${currentRegion.label}のおすすめ巡り方を提案します！',
         favoriteKeywords: const ['ハートを付けて好みを学習'],
         analyzedAt: DateTime.now(),
       );
@@ -1560,9 +1573,114 @@ $candidateListText
     );
   }
 
-  /// タイトルと説明文からカテゴリを推定
-  static SpotCategory _guessSpotCategory(String title, String desc) {
+  static const List<String> _commercialIndoorKeywords = [
+    'モール',
+    'イオン',
+    'アウトレット',
+    'ショッピング',
+    '百貨店',
+    'デパート',
+    'アリオ',
+    'ララガーデン',
+    'パルコ',
+    'エスパル',
+    'セルバ',
+    'タピオ',
+    'ロフト',
+    'プラザ',
+    '商業施設',
+    '映画',
+    'シネマ',
+    'ボウリング',
+    'ラウンドワン',
+    'アミューズメント',
+    'キッズパーク',
+    '遊び場',
+  ];
+
+  static bool _isCommercialIndoorFacility(String text) {
+    return _commercialIndoorKeywords.any(text.contains);
+  }
+
+  /// タイトル・説明文・Google Places types からカテゴリを推定
+  static SpotCategory _guessSpotCategory(
+    String title,
+    String desc, {
+    List<String> placeTypes = const [],
+  }) {
     final t = '$title $desc';
+
+    // 1. Google Places API の公式 types による高精度判定
+    if (placeTypes.isNotEmpty) {
+      const onsenTypes = {'spa', 'hot_spring', 'public_bath', 'sauna'};
+      const sightseeingTypes = {
+        'shrine',
+        'buddhist_temple',
+        'hindu_temple',
+        'place_of_worship',
+      };
+      const indoorTypes = {
+        'shopping_mall',
+        'department_store',
+        'museum',
+        'aquarium',
+        'art_gallery',
+        'movie_theater',
+        'bowling_alley',
+        'amusement_center',
+      };
+      const diningTypes = {
+        'restaurant',
+        'cafe',
+        'bakery',
+        'meal_takeaway',
+        'meal_delivery',
+        'bar',
+        'pub',
+        'coffee_shop',
+        'tea_house',
+        'ice_cream_shop',
+        'dessert_shop',
+        'confectionery',
+        'food_court',
+        'diner',
+        'bistro',
+        'izakaya',
+        'sandwich_shop',
+        'donut_shop',
+        'bagel_shop',
+        'steak_house',
+        'noodle_shop',
+      };
+      const parkTypes = {
+        'park',
+        'playground',
+        'amusement_park',
+        'zoo',
+        'campground',
+        'national_park',
+        'state_park',
+      };
+
+      if (placeTypes.any(onsenTypes.contains)) {
+        return SpotCategory.onsen;
+      }
+      if (placeTypes.any(sightseeingTypes.contains)) {
+        return SpotCategory.sightseeing;
+      }
+      if (placeTypes.any(indoorTypes.contains)) {
+        return SpotCategory.indoor;
+      }
+      if (placeTypes.any(
+          (pt) => diningTypes.contains(pt) || pt.endsWith('_restaurant'))) {
+        return SpotCategory.dining;
+      }
+      if (placeTypes.any(parkTypes.contains)) {
+        return SpotCategory.park;
+      }
+    }
+
+    // 2. タイトル・説明文の日本語キーワードによる判定
     if (t.contains('温泉') ||
         t.contains('銭湯') ||
         t.contains('サウナ') ||
@@ -1588,26 +1706,28 @@ $candidateListText
         t.contains('天文台') ||
         t.contains('美術館') ||
         t.contains('屋内') ||
-        t.contains('児童館')) {
+        t.contains('児童館') ||
+        _isCommercialIndoorFacility(t)) {
       return SpotCategory.indoor;
     }
-    if (t.contains('食堂') ||
-        t.contains('定食') ||
-        t.contains('ランチ') ||
-        t.contains('レストラン') ||
-        t.contains('ラーメン') ||
-        t.contains('そば') ||
-        t.contains('蕎麦') ||
-        t.contains('うどん') ||
-        t.contains('カフェ') ||
-        t.contains('食事処') ||
-        t.contains('ごはん') ||
-        t.contains('御食事')) {
-      return SpotCategory.dining;
-    }
-    if (t.contains('グルメ') ||
-        t.contains('朝市') ||
-        t.contains('市場')) {
+    const diningKeywords = [
+      '食堂', '定食', 'ランチ', 'レストラン', 'ラーメン', 'そば', '蕎麦',
+      'うどん', 'カフェ', '食事処', 'ごはん', '御食事', 'グルメ', '朝市', '市場',
+      '寿司', '鮨', '海鮮', '焼肉', '牛たん', '牛タン', 'ステーキ', 'ハンバーグ',
+      'カレー', 'とんかつ', '餃子', '中華', 'イタリアン', 'ピザ', 'パスタ',
+      'フレンチ', '和食', '洋食', '居酒屋', 'ベーカリー', 'パン', 'スイーツ',
+      'ケーキ', 'ジェラート', 'アイス', '甘味', '茶屋', '菓', 'フードコート',
+      'ビュッフェ', 'バイキング', '食べ放題',
+      'キッチン', 'ビストロ', 'ダイナー', 'グリル', 'バル', '珈琲', 'コーヒー',
+      '喫茶', 'ロースタリー', '麺', 'つけ麺', '焼き鳥', '焼鳥', '天ぷら',
+      'うなぎ', '鰻', '丼', 'お好み焼き', 'もんじゃ', 'たこ焼き', 'しゃぶしゃぶ',
+      'すき焼き', 'もつ鍋', 'ホルモン', 'パティスリー', 'ドーナツ', 'クレープ',
+      '和菓子', '洋菓子', '弁当', '惣菜', 'おにぎり', '回転寿司', 'ファミレス',
+      '韓国料理', 'タイ料理', 'インド料理', '中華料理', '料理店', '酒場', '酒処',
+      '割烹', '料亭', '小料理', '鉄板焼', '串カツ', '串揚げ', 'おでん',
+      '牡蠣', 'かき小屋', '炉端',
+    ];
+    if (diningKeywords.any(t.contains)) {
       return SpotCategory.dining;
     }
     if (t.contains('マルシェ') ||
@@ -1632,7 +1752,14 @@ $candidateListText
         t.contains('イベント')) {
       return SpotCategory.tourism;
     }
-    return SpotCategory.park;
+    const parkKeywords = [
+      '公園', 'アスレチック', '広場', '森', '緑地', '牧場',
+      'キャンプ', 'グリーン', 'ガーデン', 'ランド', 'パーク', 'ハイランド',
+    ];
+    if (parkKeywords.any(t.contains)) {
+      return SpotCategory.park;
+    }
+    return SpotCategory.tourism;
   }
 
 
@@ -1744,16 +1871,15 @@ $candidateListText
     );
   }
 
-  /// 選んだスポットを軸に、近くのランチ・温泉を組み合わせた「1日ドライブコースしおり」を自動生成（案A）
+  /// 選んだスポットを軸に、「食事 ⇄ 観光地・公園・屋内スポット」の連動で1日ドライブコースしおりを自動生成
   static TripPlan buildDayDrivePlanFromSpot({
     required OutingSpot mainSpot,
     required List<OutingSpot> regionalSpots,
   }) {
-    OutingSpot? nearestLunch;
-    double minLunchDist = 99999;
-    OutingSpot? nearestOnsen;
-    double minOnsenDist = 99999;
+    final isDiningMain = mainSpot.category == SpotCategory.dining ||
+        mainSpot.category == SpotCategory.gourmet;
 
+    final candidatesWithDist = <MapEntry<OutingSpot, double>>[];
     for (final candidate in regionalSpots) {
       if (candidate.id == mainSpot.id) continue;
       final dist = LocationService.calculateDistanceKm(
@@ -1762,84 +1888,166 @@ $candidateListText
         endLat: candidate.latitude,
         endLng: candidate.longitude,
       );
-      if ((candidate.category == SpotCategory.dining ||
-              candidate.category == SpotCategory.gourmet) &&
-          dist < minLunchDist) {
-        minLunchDist = dist;
-        nearestLunch = candidate;
-      }
-      if (candidate.category == SpotCategory.onsen && dist < minOnsenDist) {
-        minOnsenDist = dist;
-        nearestOnsen = candidate;
+      candidatesWithDist.add(MapEntry(candidate, dist));
+    }
+    candidatesWithDist.sort((a, b) => a.value.compareTo(b.value));
+
+    MapEntry<OutingSpot, double>? nearestLunchEntry;
+    final activityEntries = <MapEntry<OutingSpot, double>>[];
+    for (final entry in candidatesWithDist) {
+      final cat = entry.key.category;
+      if (cat == SpotCategory.dining || cat == SpotCategory.gourmet) {
+        nearestLunchEntry ??= entry;
+      } else if (cat == SpotCategory.tourism ||
+          cat == SpotCategory.park ||
+          cat == SpotCategory.indoor ||
+          cat == SpotCategory.smallPark) {
+        if (activityEntries.length < 2) {
+          activityEntries.add(entry);
+        }
       }
     }
 
+    final nearestLunch = nearestLunchEntry?.key;
+    final minLunchDist = nearestLunchEntry?.value ?? 0.0;
+    final firstActivityEntry =
+        activityEntries.isNotEmpty ? activityEntries[0] : null;
+    final secondActivityEntry =
+        activityEntries.length > 1 ? activityEntries[1] : null;
+
     final nowMs = DateTime.now().millisecondsSinceEpoch;
-    final items = <TripScheduleItem>[
-      TripScheduleItem(
-        id: 'drive_${nowMs}_1',
-        dayNumber: 1,
-        timeText: '09:30',
-        title: '自宅を出発 ➔ ${mainSpot.title}へ（${mainSpot.driveTimeLabel}）',
-        type: TripItemType.car,
-        location: mainSpot.address,
-        memo: '駐車場: ${mainSpot.parkingInfo}',
-      ),
-      TripScheduleItem(
-        id: 'drive_${nowMs}_2',
-        dayNumber: 1,
-        timeText: '10:30',
-        title: '${mainSpot.title} を家族で満喫！',
-        type: TripItemType.sightseeing,
-        location: mainSpot.address,
-        memo: mainSpot.recommendPoints.isNotEmpty
-            ? mainSpot.recommendPoints.first
-            : mainSpot.subtitle,
-        url: mainSpot.url,
-      ),
-      TripScheduleItem(
-        id: 'drive_${nowMs}_3',
-        dayNumber: 1,
-        timeText: '12:30',
-        title: nearestLunch != null
-            ? 'ランチ：${nearestLunch.title}'
-            : '${mainSpot.address}周辺のご当地グルメ・食事処でランチ',
-        type: TripItemType.food,
-        location: nearestLunch?.address ?? '${mainSpot.address}周辺',
-        memo: nearestLunch != null
-            ? '${nearestLunch.subtitle}（メイン会場から約${minLunchDist.toStringAsFixed(1)}km）'
-            : '名物グルメや道の駅で楽しいお昼ごはん🍽️',
-        url: nearestLunch?.url ?? '',
-      ),
-      TripScheduleItem(
-        id: 'drive_${nowMs}_4',
-        dayNumber: 1,
-        timeText: '14:30',
-        title: nearestOnsen != null
-            ? '立ち寄り湯：${nearestOnsen.title}'
-            : '${mainSpot.address}周辺の日帰り温泉でほっこり',
-        type: TripItemType.hotel,
-        location: nearestOnsen?.address ?? '${mainSpot.address}周辺',
-        memo: nearestOnsen != null
-            ? '${nearestOnsen.subtitle}（会場から約${minOnsenDist.toStringAsFixed(1)}km）'
-            : 'たくさん遊んだ後は露天風呂・温泉でリフレッシュ♨️',
-        url: nearestOnsen?.url ?? '',
-      ),
-      TripScheduleItem(
-        id: 'drive_${nowMs}_5',
-        dayNumber: 1,
-        timeText: '16:30',
-        title: 'お土産を買って帰路へ ➔ 自宅着',
-        type: TripItemType.car,
-        location: '帰路ドライブ',
-        memo: '安全運転で帰宅🏠',
-      ),
-    ];
+    final items = isDiningMain
+        ? <TripScheduleItem>[
+            TripScheduleItem(
+              id: 'drive_${nowMs}_1',
+              dayNumber: 1,
+              timeText: '09:30',
+              title: firstActivityEntry != null
+                  ? '自宅を出発 ➔ ${firstActivityEntry.key.title}へ（${firstActivityEntry.key.driveTimeLabel}）'
+                  : '自宅を出発 ➔ ${mainSpot.title}周辺へ（${mainSpot.driveTimeLabel}）',
+              type: TripItemType.car,
+              location: firstActivityEntry?.key.address ?? mainSpot.address,
+              memo:
+                  '駐車場: ${firstActivityEntry?.key.parkingInfo ?? mainSpot.parkingInfo}',
+            ),
+            TripScheduleItem(
+              id: 'drive_${nowMs}_2',
+              dayNumber: 1,
+              timeText: '10:30',
+              title: firstActivityEntry != null
+                  ? '午前の遊び・観光：${firstActivityEntry.key.title}'
+                  : '${mainSpot.address}周辺の観光地・公園で散策',
+              type: TripItemType.sightseeing,
+              location:
+                  firstActivityEntry?.key.address ?? '${mainSpot.address}周辺',
+              memo: firstActivityEntry != null
+                  ? '${firstActivityEntry.key.subtitle}（ランチ候補から約${firstActivityEntry.value.toStringAsFixed(1)}km）'
+                  : 'ランチ前に周辺の観光地や公園・屋内スポットを楽しもう🚗',
+              url: firstActivityEntry?.key.url ?? '',
+            ),
+            TripScheduleItem(
+              id: 'drive_${nowMs}_3',
+              dayNumber: 1,
+              timeText: '12:30',
+              title: 'ランチ：${mainSpot.title}',
+              type: TripItemType.food,
+              location: mainSpot.address,
+              memo: mainSpot.recommendPoints.isNotEmpty
+                  ? mainSpot.recommendPoints.first
+                  : mainSpot.subtitle,
+              url: mainSpot.url,
+            ),
+            TripScheduleItem(
+              id: 'drive_${nowMs}_4',
+              dayNumber: 1,
+              timeText: '14:30',
+              title: secondActivityEntry != null
+                  ? '午後の立ち寄り：${secondActivityEntry.key.title}'
+                  : '${mainSpot.address}周辺の公園・屋内スポットへ立ち寄り',
+              type: TripItemType.sightseeing,
+              location:
+                  secondActivityEntry?.key.address ?? '${mainSpot.address}周辺',
+              memo: secondActivityEntry != null
+                  ? '${secondActivityEntry.key.subtitle}（食後の立ち寄りに約${secondActivityEntry.value.toStringAsFixed(1)}km）'
+                  : '食後は近くの公園や屋内スポット・観光名所でリフレッシュ🌳',
+              url: secondActivityEntry?.key.url ?? '',
+            ),
+            TripScheduleItem(
+              id: 'drive_${nowMs}_5',
+              dayNumber: 1,
+              timeText: '16:30',
+              title: 'お土産を買って帰路へ ➔ 自宅着',
+              type: TripItemType.car,
+              location: '帰路ドライブ',
+              memo: '安全運転で帰宅🏠',
+            ),
+          ]
+        : <TripScheduleItem>[
+            TripScheduleItem(
+              id: 'drive_${nowMs}_1',
+              dayNumber: 1,
+              timeText: '09:30',
+              title: '自宅を出発 ➔ ${mainSpot.title}へ（${mainSpot.driveTimeLabel}）',
+              type: TripItemType.car,
+              location: mainSpot.address,
+              memo: '駐車場: ${mainSpot.parkingInfo}',
+            ),
+            TripScheduleItem(
+              id: 'drive_${nowMs}_2',
+              dayNumber: 1,
+              timeText: '10:30',
+              title: '${mainSpot.title} を家族で満喫！',
+              type: TripItemType.sightseeing,
+              location: mainSpot.address,
+              memo: mainSpot.recommendPoints.isNotEmpty
+                  ? mainSpot.recommendPoints.first
+                  : mainSpot.subtitle,
+              url: mainSpot.url,
+            ),
+            TripScheduleItem(
+              id: 'drive_${nowMs}_3',
+              dayNumber: 1,
+              timeText: '12:30',
+              title: nearestLunch != null
+                  ? 'ランチ：${nearestLunch.title}'
+                  : '${mainSpot.address}周辺のご当地グルメ・食事処でランチ',
+              type: TripItemType.food,
+              location: nearestLunch?.address ?? '${mainSpot.address}周辺',
+              memo: nearestLunch != null
+                  ? '${nearestLunch.subtitle}（メイン会場から約${minLunchDist.toStringAsFixed(1)}km）'
+                  : '名物グルメや道の駅で楽しいお昼ごはん🍽️',
+              url: nearestLunch?.url ?? '',
+            ),
+            TripScheduleItem(
+              id: 'drive_${nowMs}_4',
+              dayNumber: 1,
+              timeText: '14:30',
+              title: firstActivityEntry != null
+                  ? '午後の立ち寄り：${firstActivityEntry.key.title}'
+                  : '${mainSpot.address}周辺の公園・観光スポットへ立ち寄り',
+              type: TripItemType.sightseeing,
+              location:
+                  firstActivityEntry?.key.address ?? '${mainSpot.address}周辺',
+              memo: firstActivityEntry != null
+                  ? '${firstActivityEntry.key.subtitle}（会場から約${firstActivityEntry.value.toStringAsFixed(1)}km）'
+                  : 'ランチ後は周辺の公園・屋内スポットや観光名所へ立ち寄り🚗',
+              url: firstActivityEntry?.key.url ?? '',
+            ),
+            TripScheduleItem(
+              id: 'drive_${nowMs}_5',
+              dayNumber: 1,
+              timeText: '16:30',
+              title: 'お土産を買って帰路へ ➔ 自宅着',
+              type: TripItemType.car,
+              location: '帰路ドライブ',
+              memo: '安全運転で帰宅🏠',
+            ),
+          ];
 
     return TripPlan(
       id: 'trip_drive_$nowMs',
       title: '🚗 ${mainSpot.title} 1日満喫コース',
-      subtitle: '移動時間・周辺ランチ・温泉つきの1日モデルスケジュール',
+      subtitle: '移動時間・周辺ランチ・立ち寄りスポットつきの1日モデルスケジュール',
       totalDays: 1,
       items: items,
       updatedAtMs: nowMs,

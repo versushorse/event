@@ -1016,7 +1016,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    '行き先や「ここに行きたい・これ食べたい」を入力すると、Geminiがお出かけ・旅行タイムスケジュールを自動作成します（作成後に手動で自由に変更できます！）',
+                    '行き先や「ここに行きたい・これ食べたい」を入力すると、AIがお出かけ・旅行タイムスケジュールを自動作成します（作成後に手動で自由に変更できます！）',
                     style: TextStyle(fontSize: 12.5),
                   ),
                   const SizedBox(height: 10),
