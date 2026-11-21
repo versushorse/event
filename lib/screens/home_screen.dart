@@ -3114,10 +3114,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                 spot,
                                 null,
                                 const {
-                                  SpotCategory.tourism,
                                   SpotCategory.park,
+                                  SpotCategory.tourism,
                                   SpotCategory.indoor,
-                                  SpotCategory.onsen,
                                 },
                               )
                             : _jumpToMapAndSearchNearby(
@@ -3447,14 +3446,14 @@ class _HomeScreenState extends State<HomeScreen> {
                               _isSearchingAi ? null : _clearMapAreaCategory,
                         ),
                       ),
-                    _buildMapGenreChip(SpotCategory.dining, '🍽️ 周辺の食事処・ランチ'),
-                    _buildMapGenreChip(SpotCategory.tourism, '📸 周辺の観光地・名所'),
-                    _buildMapGenreChip(SpotCategory.onsen, '♨️ 周辺の温泉・銭湯'),
-                    _buildMapGenreChip(SpotCategory.sightseeing, '⛩️ 周辺の神社仏閣'),
                     _buildMapGenreChip(SpotCategory.park, '🏃 周辺の大きな公園'),
                     _buildMapGenreChip(SpotCategory.smallPark, '🌳 周辺の小さな公園'),
+                    _buildMapGenreChip(SpotCategory.dining, '🍽️ 周辺の食事処・ランチ'),
+                    _buildMapGenreChip(SpotCategory.tourism, '📸 周辺の観光地・名所'),
                     _buildMapGenreChip(SpotCategory.indoor, '🏛️ 周辺の屋内施設'),
                     _buildMapGenreChip(SpotCategory.event, '🎪 周辺のイベント'),
+                    _buildMapGenreChip(SpotCategory.onsen, '♨️ 周辺の温泉・銭湯'),
+                    _buildMapGenreChip(SpotCategory.sightseeing, '⛩️ 周辺の神社仏閣'),
                   ],
                 ),
               ),
@@ -4042,10 +4041,10 @@ class _HomeScreenState extends State<HomeScreen> {
                           spot.category == SpotCategory.dining ||
                               spot.category == SpotCategory.gourmet;
                       const activityOptions = [
-                        (SpotCategory.tourism, '📸 近くの観光地・名所'),
                         (SpotCategory.park, '🏃 近くの大きな公園'),
-                        (SpotCategory.indoor, '🏛️ 近くの屋内スポット'),
                         (SpotCategory.smallPark, '🌳 近くの小さな公園'),
+                        (SpotCategory.tourism, '📸 近くの観光地・名所'),
+                        (SpotCategory.indoor, '🏛️ 近くの屋内スポット'),
                         (SpotCategory.onsen, '♨️ 近くの温泉・銭湯'),
                         (SpotCategory.sightseeing, '⛩️ 近くの神社仏閣'),
                       ];
