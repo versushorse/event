@@ -2555,23 +2555,36 @@ class _HomeScreenState extends State<HomeScreen> {
                   onEditTap: () => _showQuickVisitedDialog(context, spot),
                 ),
 
-              // 立ち寄り先（近隣の温泉・神社等）を地図で探すショートカットボタン
+              // 立ち寄り先（食事 ⇄ 観光地・公園・温泉・神社連動）を地図で探すショートカットボタン
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: SizedBox(
                   width: double.infinity,
-                  child: FilledButton.tonalIcon(
-                    onPressed: () =>
-                        _jumpToMapAndSearchNearby(spot, SpotCategory.onsen),
-                    style: FilledButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                    ),
-                    icon: const Icon(Icons.travel_explore, size: 17),
-                    label: const Text(
-                      '♨️⛩️ この周辺の温泉・神社・立ち寄り先を地図で探す',
-                      style:
-                          TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                    ),
+                  child: Builder(
+                    builder: (context) {
+                      final isDiningSpot =
+                          spot.category == SpotCategory.dining ||
+                              spot.category == SpotCategory.gourmet;
+                      return FilledButton.tonalIcon(
+                        onPressed: () => _jumpToMapAndSearchNearby(
+                          spot,
+                          isDiningSpot
+                              ? SpotCategory.tourism
+                              : SpotCategory.dining,
+                        ),
+                        style: FilledButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        icon: const Icon(Icons.travel_explore, size: 17),
+                        label: Text(
+                          isDiningSpot
+                              ? '📸🌳 この周辺の観光地・公園・温泉・立ち寄り先を地図で探す'
+                              : '🍽️♨️ この周辺のランチ・食事処・立ち寄り先を地図で探す',
+                          style: const TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),
@@ -3457,77 +3470,65 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 4),
                   ],
 
-                  // このスポット周辺の立ち寄り先をワンタップで地図検索できるボックス
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.teal.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.teal.shade200),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          '🗺️ ついでに寄れる！この周辺の立ち寄りスポットを地図で探す',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 13),
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            SafeActionChip(
-                              label: const Text('🍽️ 近くの食事処・ランチ',
-                                  style: TextStyle(fontSize: 12)),
-                              onPressed: () {
-                                Navigator.of(sheetContext).pop();
-                                _jumpToMapAndSearchNearby(
-                                    spot, SpotCategory.dining);
-                              },
-                            ),
-                            SafeActionChip(
-                              label: const Text('📸 近くの観光地・名所',
-                                  style: TextStyle(fontSize: 12)),
-                              onPressed: () {
-                                Navigator.of(sheetContext).pop();
-                                _jumpToMapAndSearchNearby(
-                                    spot, SpotCategory.tourism);
-                              },
-                            ),
-                            SafeActionChip(
-                              label: const Text('♨️ 近くの温泉・銭湯',
-                                  style: TextStyle(fontSize: 12)),
-                              onPressed: () {
-                                Navigator.of(sheetContext).pop();
-                                _jumpToMapAndSearchNearby(
-                                    spot, SpotCategory.onsen);
-                              },
-                            ),
-                            SafeActionChip(
-                              label: const Text('⛩️ 近くの神社仏閣',
-                                  style: TextStyle(fontSize: 12)),
-                              onPressed: () {
-                                Navigator.of(sheetContext).pop();
-                                _jumpToMapAndSearchNearby(
-                                    spot, SpotCategory.sightseeing);
-                              },
-                            ),
-                            SafeActionChip(
-                              label: const Text('🏃 近くの大きな公園',
-                                  style: TextStyle(fontSize: 12)),
-                              onPressed: () {
-                                Navigator.of(sheetContext).pop();
-                                _jumpToMapAndSearchNearby(
-                                    spot, SpotCategory.park);
-                              },
-                            ),
+                  // このスポット周辺の立ち寄り先（食事 ⇄ 観光地・公園・温泉・神社連動）をワンタップで地図検索できるボックス
+                  Builder(
+                    builder: (context) {
+                      final isDiningSpot =
+                          spot.category == SpotCategory.dining ||
+                              spot.category == SpotCategory.gourmet;
+                      const activityOptions = [
+                        (SpotCategory.tourism, '📸 近くの観光地・名所'),
+                        (SpotCategory.park, '🏃 近くの大きな公園'),
+                        (SpotCategory.indoor, '🏛️ 近くの屋内スポット'),
+                        (SpotCategory.smallPark, '🌳 近くの小さな公園'),
+                        (SpotCategory.onsen, '♨️ 近くの温泉・銭湯'),
+                        (SpotCategory.sightseeing, '⛩️ 近くの神社仏閣'),
+                      ];
+                      final stopoverOptions = isDiningSpot
+                          ? activityOptions
+                          : [
+                              (SpotCategory.dining, '🍽️ 近くの食事処・ランチ'),
+                              ...activityOptions.where(
+                                (opt) => opt.$1 != spot.category,
+                              ),
+                            ];
 
+                      return Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.teal.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.teal.shade200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              isDiningSpot
+                                  ? '🗺️ 食後に寄れる！この周辺の観光地・公園・温泉・神社'
+                                  : '🗺️ 前後に寄れる！この周辺の食事処・立ち寄りスポット',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: stopoverOptions.map((opt) {
+                                return SafeActionChip(
+                                  label: Text(opt.$2,
+                                      style: const TextStyle(fontSize: 12)),
+                                  onPressed: () {
+                                    Navigator.of(sheetContext).pop();
+                                    _jumpToMapAndSearchNearby(spot, opt.$1);
+                                  },
+                                );
+                              }).toList(),
+                            ),
                           ],
                         ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
                   const SizedBox(height: 14),
                   SizedBox(

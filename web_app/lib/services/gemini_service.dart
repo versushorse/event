@@ -158,7 +158,6 @@ class GeminiOutingService {
         category: SpotCategory.onsen,
         tags: const [
           SpotTag.onsen,
-          SpotTag.kids,
           SpotTag.freeParking,
           SpotTag.food,
         ],
@@ -231,7 +230,7 @@ class GeminiOutingService {
         subtitle: '小学生の理科・実験好きが夢中になる参加体験型サイエンスミュージアム',
         category: SpotCategory.indoor,
         tags: const [
-          SpotTag.kids,
+          SpotTag.toddler,
           SpotTag.indoor,
           SpotTag.freeParking,
         ],
@@ -341,7 +340,7 @@ class GeminiOutingService {
         tags: const [
           SpotTag.food,
           SpotTag.freeParking,
-          SpotTag.kids,
+          SpotTag.baby,
         ],
         driveMinutes: 45,
         distanceKm: 27.8,
@@ -2030,8 +2029,14 @@ class GeminiOutingService {
       }
 
       // カテゴリとタグの決定
-      final SpotCategory category =
-          targetCategory ?? _guessSpotCategory(rawTitle, editorial ?? '');
+      final rawTypes = raw['types'] as List<dynamic>? ?? [];
+      final placeTypes = rawTypes.map((e) => e.toString()).toList();
+      final SpotCategory category = targetCategory ??
+          _guessSpotCategory(
+            rawTitle,
+            editorial ?? '',
+            placeTypes: placeTypes,
+          );
 
       // おすすめポイント（Googleマップのレビューとは分離し、スポット自体の魅力・特徴・設備を表示）
       final points = <String>[];
@@ -2063,8 +2068,13 @@ class GeminiOutingService {
         }
       }
 
+      final titleAndDesc = '$rawTitle ${editorial ?? ''}';
       final tags = <SpotTag>{};
       if (hasFreeParking) tags.add(SpotTag.freeParking);
+      if (titleAndDesc.contains('アスレチック') ||
+          titleAndDesc.contains('遊具')) {
+        tags.add(SpotTag.kids);
+      }
       if (category == SpotCategory.park) {
         tags.add(SpotTag.kids);
         tags.add(SpotTag.nature);
@@ -2073,7 +2083,11 @@ class GeminiOutingService {
         tags.add(SpotTag.nature);
       } else if (category == SpotCategory.indoor) {
         tags.add(SpotTag.indoor);
-        tags.add(SpotTag.kids);
+        if (_isCommercialIndoorFacility(titleAndDesc)) {
+          tags.add(SpotTag.baby);
+        } else {
+          tags.add(SpotTag.toddler);
+        }
       } else if (category == SpotCategory.smallPark) {
         tags.add(SpotTag.nature);
         tags.add(SpotTag.freeEntry);
@@ -2082,11 +2096,10 @@ class GeminiOutingService {
         tags.add(SpotTag.baby);
       } else if (category == SpotCategory.sightseeing) {
         tags.add(SpotTag.baby);
-      } else if (category == SpotCategory.dining) {
+      } else if (category == SpotCategory.dining ||
+          category == SpotCategory.gourmet) {
         tags.add(SpotTag.food);
-        tags.add(SpotTag.kids);
-      } else if (category == SpotCategory.gourmet) {
-        tags.add(SpotTag.food);
+        tags.add(SpotTag.baby);
       }
 
       final websiteUri = raw['websiteUri'] as String?;
@@ -2869,9 +2882,114 @@ $candidateListText
     }).toList();
   }
 
-  /// タイトルと説明文からカテゴリを推定
-  static SpotCategory _guessSpotCategory(String title, String desc) {
+  static const List<String> _commercialIndoorKeywords = [
+    'モール',
+    'イオン',
+    'アウトレット',
+    'ショッピング',
+    '百貨店',
+    'デパート',
+    'アリオ',
+    'ララガーデン',
+    'パルコ',
+    'エスパル',
+    'セルバ',
+    'タピオ',
+    'ロフト',
+    'プラザ',
+    '商業施設',
+    '映画',
+    'シネマ',
+    'ボウリング',
+    'ラウンドワン',
+    'アミューズメント',
+    'キッズパーク',
+    '遊び場',
+  ];
+
+  static bool _isCommercialIndoorFacility(String text) {
+    return _commercialIndoorKeywords.any(text.contains);
+  }
+
+  /// タイトル・説明文・Google Places types からカテゴリを推定
+  static SpotCategory _guessSpotCategory(
+    String title,
+    String desc, {
+    List<String> placeTypes = const [],
+  }) {
     final t = '$title $desc';
+
+    // 1. Google Places API の公式 types による高精度判定
+    if (placeTypes.isNotEmpty) {
+      const onsenTypes = {'spa', 'hot_spring', 'public_bath', 'sauna'};
+      const sightseeingTypes = {
+        'shrine',
+        'buddhist_temple',
+        'hindu_temple',
+        'place_of_worship',
+      };
+      const indoorTypes = {
+        'shopping_mall',
+        'department_store',
+        'museum',
+        'aquarium',
+        'art_gallery',
+        'movie_theater',
+        'bowling_alley',
+        'amusement_center',
+      };
+      const diningTypes = {
+        'restaurant',
+        'cafe',
+        'bakery',
+        'meal_takeaway',
+        'meal_delivery',
+        'bar',
+        'pub',
+        'coffee_shop',
+        'tea_house',
+        'ice_cream_shop',
+        'dessert_shop',
+        'confectionery',
+        'food_court',
+        'diner',
+        'bistro',
+        'izakaya',
+        'sandwich_shop',
+        'donut_shop',
+        'bagel_shop',
+        'steak_house',
+        'noodle_shop',
+      };
+      const parkTypes = {
+        'park',
+        'playground',
+        'amusement_park',
+        'zoo',
+        'campground',
+        'national_park',
+        'state_park',
+      };
+
+      if (placeTypes.any(onsenTypes.contains)) {
+        return SpotCategory.onsen;
+      }
+      if (placeTypes.any(sightseeingTypes.contains)) {
+        return SpotCategory.sightseeing;
+      }
+      if (placeTypes.any(indoorTypes.contains)) {
+        return SpotCategory.indoor;
+      }
+      if (placeTypes.any(
+          (pt) => diningTypes.contains(pt) || pt.endsWith('_restaurant'))) {
+        return SpotCategory.dining;
+      }
+      if (placeTypes.any(parkTypes.contains)) {
+        return SpotCategory.park;
+      }
+    }
+
+    // 2. タイトル・説明文の日本語キーワードによる判定
     if (t.contains('温泉') ||
         t.contains('銭湯') ||
         t.contains('サウナ') ||
@@ -2897,26 +3015,28 @@ $candidateListText
         t.contains('天文台') ||
         t.contains('美術館') ||
         t.contains('屋内') ||
-        t.contains('児童館')) {
+        t.contains('児童館') ||
+        _isCommercialIndoorFacility(t)) {
       return SpotCategory.indoor;
     }
-    if (t.contains('食堂') ||
-        t.contains('定食') ||
-        t.contains('ランチ') ||
-        t.contains('レストラン') ||
-        t.contains('ラーメン') ||
-        t.contains('そば') ||
-        t.contains('蕎麦') ||
-        t.contains('うどん') ||
-        t.contains('カフェ') ||
-        t.contains('食事処') ||
-        t.contains('ごはん') ||
-        t.contains('御食事')) {
-      return SpotCategory.dining;
-    }
-    if (t.contains('グルメ') ||
-        t.contains('朝市') ||
-        t.contains('市場')) {
+    const diningKeywords = [
+      '食堂', '定食', 'ランチ', 'レストラン', 'ラーメン', 'そば', '蕎麦',
+      'うどん', 'カフェ', '食事処', 'ごはん', '御食事', 'グルメ', '朝市', '市場',
+      '寿司', '鮨', '海鮮', '焼肉', '牛たん', '牛タン', 'ステーキ', 'ハンバーグ',
+      'カレー', 'とんかつ', '餃子', '中華', 'イタリアン', 'ピザ', 'パスタ',
+      'フレンチ', '和食', '洋食', '居酒屋', 'ベーカリー', 'パン', 'スイーツ',
+      'ケーキ', 'ジェラート', 'アイス', '甘味', '茶屋', '菓', 'フードコート',
+      'ビュッフェ', 'バイキング', '食べ放題',
+      'キッチン', 'ビストロ', 'ダイナー', 'グリル', 'バル', '珈琲', 'コーヒー',
+      '喫茶', 'ロースタリー', '麺', 'つけ麺', '焼き鳥', '焼鳥', '天ぷら',
+      'うなぎ', '鰻', '丼', 'お好み焼き', 'もんじゃ', 'たこ焼き', 'しゃぶしゃぶ',
+      'すき焼き', 'もつ鍋', 'ホルモン', 'パティスリー', 'ドーナツ', 'クレープ',
+      '和菓子', '洋菓子', '弁当', '惣菜', 'おにぎり', '回転寿司', 'ファミレス',
+      '韓国料理', 'タイ料理', 'インド料理', '中華料理', '料理店', '酒場', '酒処',
+      '割烹', '料亭', '小料理', '鉄板焼', '串カツ', '串揚げ', 'おでん',
+      '牡蠣', 'かき小屋', '炉端',
+    ];
+    if (diningKeywords.any(t.contains)) {
       return SpotCategory.dining;
     }
     if (t.contains('マルシェ') ||
@@ -2941,7 +3061,14 @@ $candidateListText
         t.contains('イベント')) {
       return SpotCategory.event;
     }
-    return SpotCategory.park;
+    const parkKeywords = [
+      '公園', 'アスレチック', '広場', '森', '緑地', '牧場',
+      'キャンプ', 'グリーン', 'ガーデン', 'ランド', 'パーク', 'ハイランド',
+    ];
+    if (parkKeywords.any(t.contains)) {
+      return SpotCategory.park;
+    }
+    return SpotCategory.tourism;
   }
 
   /// イベントの会場名・エリア名から東北6県（宮城・山形・岩手・福島・秋田・青森）の緯度経度・駐車場情報を解決

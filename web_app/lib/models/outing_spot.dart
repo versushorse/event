@@ -864,7 +864,14 @@ class OutingSpot {
       title: json['title'] as String? ?? '',
       subtitle: json['subtitle'] as String? ?? '',
       category: category,
-      tags: tags.isEmpty ? [SpotTag.food, SpotTag.kids] : tags,
+      tags: tags.isEmpty
+          ? (category == SpotCategory.park
+              ? [SpotTag.kids]
+              : (category == SpotCategory.dining ||
+                      category == SpotCategory.gourmet
+                  ? [SpotTag.food]
+                  : [SpotTag.baby]))
+          : tags,
       driveMinutes: (json['driveMinutes'] as num?)?.toInt() ?? 60,
       distanceKm: (json['distanceKm'] as num?)?.toDouble() ?? 30.0,
       scheduleText: json['scheduleText'] as String? ?? '',
