@@ -4,16 +4,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// アフィリエイトASP設定（審査通過後にご自身のID・計測URLを設定するだけで本番稼働します）
 class AffiliateConfig {
   /// じゃらん（バリューコマース / A8.net等の計測URLプレフィックス。空なら公式検索へ遷移）
-  static const String jalanAffiliatePrefix = '';
+  static const String jalanAffiliatePrefix =
+      'https://px.a8.net/svt/ejp?a8mat=4BGQGS+FEAKZ6+14CS+656YP&a8ejpredirect=';
 
   /// 楽天トラベル / 楽天市場（楽天アフィリエイトID例: '12345678.abcdefgh'）
-  static const String rakutenAffiliateId = '';
+  static const String rakutenAffiliateId = '59c88939.7092cc7f';
 
   /// アソビュー！（体験・割引チケットのASP計測URLプレフィックス）
   static const String asoviewAffiliatePrefix = '';
 
   /// Amazonアソシエイト トラッキングID（例: 'weekendouting-22'）
-  static const String amazonAssociateTag = '';
+  static const String amazonAssociateTag = 'weekendouting-22';
 }
 
 /// Google AdMob 本番移行用ユニットID設定（テストIDを初期設定）
