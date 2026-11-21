@@ -1,7 +1,6 @@
 // 位置情報（GPS）取得・距離計算サービス
-import 'dart:io' show Platform;
 import 'dart:math';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:geolocator/geolocator.dart';
 
 class LocationResult {
@@ -17,9 +16,12 @@ class LocationResult {
 }
 
 class LocationService {
+  static bool get _isRunningInTest =>
+      WidgetsBinding.instance.runtimeType.toString().contains('Test');
+
   /// 端末が直近にキャッシュしている位置情報を瞬時（ミリ秒）に取得
   static Future<LocationResult?> getLastKnownLocation() async {
-    if (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')) {
+    if (_isRunningInTest) {
       return null;
     }
 
@@ -52,7 +54,7 @@ class LocationService {
   /// 現在位置（GPS）を高精度で取得する
   static Future<LocationResult?> getCurrentLocation() async {
     // ユニットテスト/ウィジェットテスト環境ではネイティブGPSを呼び出さず安全にスキップ
-    if (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')) {
+    if (_isRunningInTest) {
       return null;
     }
 

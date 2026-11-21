@@ -22,24 +22,25 @@ void main() {
     await tester.pumpWidget(const WeekendOutingApp());
     await tester.pumpAndSettle();
 
-    // アプリタイトルと東北地域タブ・ジャンルボタンが表示されていることを確認
+    // アプリタイトルと現在地・東北地域タブ・地域変更・ジャンルボタンが表示されていることを確認
     expect(find.text('週末どこ行く？AIナビ'), findsOneWidget);
+    expect(find.text('現在地'), findsOneWidget);
     expect(find.text('宮城県'), findsWidgets);
     expect(find.text('山形県'), findsWidgets);
     expect(find.text('岩手県'), findsWidgets);
+    expect(find.text('地域変更'), findsOneWidget);
     expect(find.text('期間限定イベント'), findsWidgets);
     expect(find.text('地元グルメ・食事処'), findsWidgets);
     expect(find.text('観光地・名所'), findsWidgets);
     expect(find.text('温泉・日帰り銭湯'), findsWidgets);
 
-    // Web版ではGemini好みAIナビカードが表示されないことを確認
+    // 夫婦の好みAIナビが表示されていることを確認（非Web＝Android版）
     expect(find.text('夫婦の好みAIナビ'), findsNothing);
-    expect(find.text('お出かけ好みAIナビ'), findsNothing);
 
     // 下部ナビゲーションのタブが表示されていることを確認
     expect(find.text('AI提案・検索'), findsOneWidget);
     expect(find.text('ドライブ地図'), findsOneWidget);
-    expect(find.text('行きたい！リスト'), findsOneWidget);
+    expect(find.text('夫婦の行きたい！'), findsOneWidget);
   });
 
   test('直近の週末（11/9月曜日に調べたら11/14土〜11/15日）の自動算出テスト', () {
@@ -88,7 +89,7 @@ void main() {
 
     final spots = GeminiOutingService.getInitialSpots().take(2).toList();
     final text = CoupleSyncService.exportFavoritesShareText(spots, room);
-    expect(text.contains('行きたいスポット一覧'), isTrue);
+    expect(text.contains('夫婦の行きたいスポット一覧'), isTrue);
     expect(text.contains(room), isTrue);
   });
 
@@ -429,5 +430,21 @@ void main() {
 
     expect(savedSpot, isNotNull);
     expect(savedSpot!.visitedPhotos, [samplePhoto]);
+  });
+
+  test('全国47都道府県カスタム地域定義と最寄り都道府県判定（nearestTo）のテスト', () {
+    expect(TohokuRegion.values.length, 47);
+    expect(TohokuRegion.defaultTohokuRegions.length, 6);
+    expect(TohokuRegion.allAreaGroups.length, 7);
+
+    expect(TohokuRegion.fromKey('tokyo'), TohokuRegion.tokyo);
+    expect(TohokuRegion.fromKey('unknown_key'), isNull);
+
+    // 東京駅付近 -> 東京都
+    expect(TohokuRegion.nearestTo(35.6812, 139.7671), TohokuRegion.tokyo);
+    // 仙台市中心部 -> 宮城県
+    expect(TohokuRegion.nearestTo(38.2682, 140.8694), TohokuRegion.miyagi);
+    // 大阪市付近 -> 大阪府
+    expect(TohokuRegion.nearestTo(34.6937, 135.5023), TohokuRegion.osaka);
   });
 }
