@@ -413,6 +413,7 @@ class GeminiOutingService {
     double? userLat,
     double? userLng,
     SpotCategory? targetCategory,
+    Set<SpotCategory>? targetCategories,
     TohokuRegion selectedRegion = TohokuRegion.miyagi,
     DateTimeRange? targetDateRange,
     double? searchCenterLat,
@@ -426,8 +427,19 @@ class GeminiOutingService {
     final effectiveDateRange = targetDateRange ?? getUpcomingWeekendRange();
     final dateRangeText = formatDateRange(effectiveDateRange);
 
-    // クエリやターゲットカテゴリから検索ジャンルを判定
-    final resolvedCategory = _resolveSearchGenre(cleanQuery, targetCategory);
+    // クエリやターゲットカテゴリから検索ジャンル（単一または複数）を判定
+    final effectiveCategories = <SpotCategory>{...?targetCategories};
+    if (targetCategory != null) {
+      effectiveCategories.add(targetCategory);
+    }
+    if (effectiveCategories.isEmpty) {
+      final inferred = _resolveSearchGenre(cleanQuery, null);
+      if (inferred != null) {
+        effectiveCategories.add(inferred);
+      }
+    }
+    final SpotCategory? singleCategory =
+        effectiveCategories.length == 1 ? effectiveCategories.first : null;
 
     // フリーワードに東北以外の都道府県名や具体的な地名が含まれているか判定
     final externalArea = _detectExternalAreaInQuery(cleanQuery);
@@ -454,17 +466,19 @@ class GeminiOutingService {
           searchCenterLat: searchCenterLat,
           searchCenterLng: searchCenterLng,
           mapCenterLabel: mapCenterLabel,
-          targetCategory: resolvedCategory,
+          targetCategory: singleCategory,
+          targetCategories: effectiveCategories,
         );
         if (placesResult != null && placesResult.spots.isNotEmpty) {
           final finalSpots = placesResult.spots;
 
           if (apiKey.isNotEmpty) {
+            final genreLabel = effectiveCategories.isNotEmpty
+                ? effectiveCategories.map((c) => c.label).join('・')
+                : '$areaDisplayLabelのお出かけ・ファミリースポット';
             final aiEnhanced = await _enhanceSpotsWithGeminiAi(
               apiKey: apiKey,
-              query: cleanQuery.isEmpty
-                  ? (resolvedCategory?.label ?? '$areaDisplayLabelのお出かけ・ファミリースポット')
-                  : cleanQuery,
+              query: cleanQuery.isEmpty ? genreLabel : cleanQuery,
               areaLabel: areaDisplayLabel,
               dateRangeLabel: dateRangeText,
               spots: finalSpots,
@@ -486,7 +500,8 @@ class GeminiOutingService {
     return _fallbackCategorySearch(
       query: cleanQuery,
       areaLabel: areaDisplayLabel,
-      targetCategory: resolvedCategory,
+      targetCategory: singleCategory,
+      targetCategories: effectiveCategories,
       userLat: userLat,
       userLng: userLng,
     );
@@ -810,6 +825,99 @@ class GeminiOutingService {
     return s.trim();
   }
 
+  /// ジャンル単体ごとの Google Places API 検索クエリ群を生成する
+  static List<String> _buildCategorySearchQueries(
+    SpotCategory? category, {
+    required String specificKeyword,
+    required String queryPrefix,
+    required String rawQuery,
+  }) {
+    switch (category) {
+      case SpotCategory.event:
+        return specificKeyword.isNotEmpty
+            ? ['$specificKeyword 周辺 週末イベント まつり', '$specificKeyword 周辺 マルシェ 催し物 フェスティバル']
+            : [
+                '$queryPrefix 週末イベント まつり 催し物 フェスティバル',
+                '$queryPrefix マルシェ フリーマーケット クラフト市 収穫祭',
+              ];
+
+      case SpotCategory.onsen:
+        return specificKeyword.isNotEmpty
+            ? ['$specificKeyword 周辺 温泉 日帰り入浴 露天風呂', '$specificKeyword 周辺 スーパー銭湯 銭湯 足湯']
+            : [
+                '$queryPrefix 日帰り温泉 温泉 露天風呂 源泉',
+                '$queryPrefix スーパー銭湯 銭湯 サウナ スパ 共同浴場',
+              ];
+
+      case SpotCategory.indoor:
+        return specificKeyword.isNotEmpty
+            ? ['$specificKeyword 周辺 科学館 博物館 水族館 記念館', '$specificKeyword 周辺 屋内 遊び場 美術館 体験施設']
+            : [
+                '$queryPrefix 科学館 博物館 水族館 天文台 美術館',
+                '$queryPrefix 屋内遊び場 児童館 体験施設 こども館',
+              ];
+
+      case SpotCategory.park:
+        return specificKeyword.isNotEmpty
+            ? ['$specificKeyword 周辺 大型公園 アスレチック 総合公園', '$specificKeyword 周辺 運動公園 自然公園 広場']
+            : [
+                '$queryPrefix 大型公園 総合公園 国営公園 県立公園 運動公園',
+                '$queryPrefix フィールドアスレチック 冒険広場 大型遊具 森林公園',
+              ];
+
+      case SpotCategory.smallPark:
+        return specificKeyword.isNotEmpty
+            ? ['$specificKeyword 周辺 公園 緑地 広場', '$specificKeyword 周辺 児童公園 親水公園']
+            : [
+                '$queryPrefix 公園 緑地 親水公園 芝生広場',
+                '$queryPrefix 児童公園 近隣公園 街区公園',
+              ];
+
+      case SpotCategory.tourism:
+        return specificKeyword.isNotEmpty
+            ? ['$specificKeyword 周辺 観光スポット 名所 展望台', '$specificKeyword 周辺 観光地 絶景 史跡 散策 道の駅']
+            : [
+                '$queryPrefix 観光スポット 名所 観光地 展望台 城跡',
+                '$queryPrefix 渓谷 滝 絶景 ドライブスポット 観光名所 道の駅',
+              ];
+
+      case SpotCategory.sightseeing:
+        return specificKeyword.isNotEmpty
+            ? ['$specificKeyword 周辺 神社 寺院 仏閣', '$specificKeyword 周辺 八幡宮 東照宮 観音']
+            : [
+                '$queryPrefix 神社 八幡宮 東照宮 稲荷神社 神宮',
+                '$queryPrefix 寺院 仏閣 観音 不動尊 大社',
+              ];
+
+      case SpotCategory.dining:
+      case SpotCategory.gourmet:
+        return specificKeyword.isNotEmpty
+            ? [
+                '$specificKeyword 周辺 ランチ 美味しい 食事処',
+                '$specificKeyword 周辺 名物 そば 定食 食堂 カフェ レストラン',
+                '$specificKeyword 周辺 道の駅 ご当地グルメ 食べ歩き',
+              ]
+            : [
+                '$queryPrefix ご当地グルメ 名物ランチ 食堂 定食屋',
+                '$queryPrefix 人気ランチ 子連れ 美味しい レストラン',
+                '$queryPrefix 道の駅 食堂 ドライブイン 名物料理',
+              ];
+
+      default:
+        // フリーワード検索または「すべて」
+        if (rawQuery.isNotEmpty) {
+          return [
+            '$rawQuery 周辺 観光 お出かけ スポット',
+            '$rawQuery 周辺 ランチ グルメ 名所',
+          ];
+        }
+        return [
+          '$queryPrefix 大型公園 科学館 水族館 遊び場 家族',
+          '$queryPrefix 観光スポット 名所 道の駅 人気ランチ',
+        ];
+    }
+  }
+
   // ===========================================================================
   // 2. Google Places API (New) による純粋な常設スポット大量検索エンジン
   //    イベントに引っ張られず、地域タブ・フリーワード・地図中心周辺のスポットを多数取得！
@@ -826,9 +934,15 @@ class GeminiOutingService {
     double? searchCenterLng,
     String? mapCenterLabel,
     SpotCategory? targetCategory,
+    Set<SpotCategory>? targetCategories,
   }) async {
     final startLat = userLat ?? 38.3866;
     final startLng = userLng ?? 140.8712;
+
+    final effectiveCategories = <SpotCategory>{...?targetCategories};
+    if (targetCategory != null) {
+      effectiveCategories.add(targetCategory);
+    }
 
     final effectiveRegion = _resolveEffectiveTohokuRegion(query, selectedRegion);
     final isMapSearch = searchCenterLat != null && searchCenterLng != null;
@@ -850,113 +964,39 @@ class GeminiOutingService {
         ? '$areaName $specificKeyword'
         : areaName;
 
-    // ジャンルごとに複数の検索クエリを並列で投げて、純粋なスポットを豊富（20〜35件）に取得する！
-    final List<String> searchQueries;
-    double biasRadiusMeters = isMapSearch ? 22000.0 : 48000.0;
+    // ジャンルごとに複数の検索クエリを並列で投げて、純粋なスポットを豊富に取得する
+    final double biasRadiusMeters = (effectiveCategories.length == 1 &&
+            effectiveCategories.first == SpotCategory.smallPark)
+        ? (isMapSearch ? 12000.0 : 25000.0)
+        : (isMapSearch ? 22000.0 : 48000.0);
 
-    switch (targetCategory) {
-      case SpotCategory.event:
-        searchQueries = specificKeyword.isNotEmpty
-            ? ['$specificKeyword 周辺 週末イベント まつり', '$specificKeyword 周辺 マルシェ 催し物 フェスティバル']
-            : [
-                '$queryPrefix 週末イベント まつり 催し物 フェスティバル',
-                '$queryPrefix マルシェ フリーマーケット クラフト市 収穫祭',
-              ];
-        break;
-
-      case SpotCategory.onsen:
-        searchQueries = specificKeyword.isNotEmpty
-            ? ['$specificKeyword 周辺 温泉 日帰り入浴 露天風呂', '$specificKeyword 周辺 スーパー銭湯 銭湯 足湯']
-            : [
-                '$queryPrefix 日帰り温泉 温泉 露天風呂 源泉',
-                '$queryPrefix スーパー銭湯 銭湯 サウナ スパ 共同浴場',
-              ];
-        break;
-
-      case SpotCategory.indoor:
-        searchQueries = specificKeyword.isNotEmpty
-            ? ['$specificKeyword 周辺 科学館 博物館 水族館 記念館', '$specificKeyword 周辺 屋内 遊び場 美術館 体験施設']
-            : [
-                '$queryPrefix 科学館 博物館 水族館 天文台 美術館',
-                '$queryPrefix 屋内遊び場 児童館 体験施設 こども館',
-              ];
-        break;
-
-      case SpotCategory.park:
-        searchQueries = specificKeyword.isNotEmpty
-            ? ['$specificKeyword 周辺 大型公園 アスレチック 総合公園', '$specificKeyword 周辺 運動公園 自然公園 広場']
-            : [
-                '$queryPrefix 大型公園 総合公園 国営公園 県立公園 運動公園',
-                '$queryPrefix フィールドアスレチック 冒険広場 大型遊具 森林公園',
-              ];
-        break;
-
-      case SpotCategory.smallPark:
-        // 小さな公園：地図中心検索または現在地と同じ県なら近傍を優先しつつ複数取得
-        biasRadiusMeters = isMapSearch ? 12000.0 : 25000.0;
-        searchQueries = specificKeyword.isNotEmpty
-            ? ['$specificKeyword 周辺 公園 緑地 広場', '$specificKeyword 周辺 児童公園 親水公園']
-            : [
-                '$queryPrefix 公園 緑地 親水公園 芝生広場',
-                '$queryPrefix 児童公園 近隣公園 街区公園',
-              ];
-        break;
-
-      case SpotCategory.tourism:
-        searchQueries = specificKeyword.isNotEmpty
-            ? ['$specificKeyword 周辺 観光スポット 名所 展望台', '$specificKeyword 周辺 観光地 絶景 史跡 散策 道の駅']
-            : [
-                '$queryPrefix 観光スポット 名所 観光地 展望台 城跡',
-                '$queryPrefix 渓谷 滝 絶景 ドライブスポット 観光名所 道の駅',
-              ];
-        break;
-
-      case SpotCategory.sightseeing:
-        searchQueries = specificKeyword.isNotEmpty
-            ? ['$specificKeyword 周辺 神社 寺院 仏閣', '$specificKeyword 周辺 八幡宮 東照宮 観音']
-            : [
-                '$queryPrefix 神社 八幡宮 東照宮 稲荷神社 神宮',
-                '$queryPrefix 寺院 仏閣 観音 不動尊 大社',
-              ];
-        break;
-
-      case SpotCategory.dining:
-      case SpotCategory.gourmet:
-        searchQueries = specificKeyword.isNotEmpty
-            ? [
-                '$specificKeyword 周辺 ランチ 美味しい 食事処',
-                '$specificKeyword 周辺 名物 そば 定食 食堂 カフェ レストラン',
-                '$specificKeyword 周辺 道の駅 ご当地グルメ 食べ歩き',
-              ]
-            : [
-                '$queryPrefix ご当地グルメ 名物ランチ 食堂 定食屋',
-                '$queryPrefix 人気ランチ 子連れ 美味しい レストラン',
-                '$queryPrefix 道の駅 食堂 ドライブイン 名物料理',
-              ];
-        break;
-
-
-
-      default:
-        // フリーワード検索または「すべて」
-        if (query.isNotEmpty) {
-          searchQueries = [
-            '$query 周辺 観光 お出かけ スポット',
-            '$query 周辺 ランチ グルメ 名所',
-          ];
-        } else {
-          searchQueries = [
-            '$queryPrefix 大型公園 科学館 水族館 遊び場 家族',
-            '$queryPrefix 観光スポット 名所 道の駅 人気ランチ',
-          ];
+    final queryTasks = <(SpotCategory?, String)>[];
+    if (effectiveCategories.isEmpty) {
+      for (final q in _buildCategorySearchQueries(
+        null,
+        specificKeyword: specificKeyword,
+        queryPrefix: queryPrefix,
+        rawQuery: query,
+      )) {
+        queryTasks.add((null, q));
+      }
+    } else {
+      for (final cat in effectiveCategories) {
+        for (final q in _buildCategorySearchQueries(
+          cat,
+          specificKeyword: specificKeyword,
+          queryPrefix: queryPrefix,
+          rawQuery: query,
+        )) {
+          queryTasks.add((cat, q));
         }
-        break;
+      }
     }
 
     final uri = Uri.parse('https://places.googleapis.com/v1/places:searchText');
-    final requests = searchQueries.map((qText) {
+    final requests = queryTasks.map((task) {
       final reqBody = <String, dynamic>{
-        'textQuery': qText,
+        'textQuery': task.$2,
         'languageCode': 'ja',
         'maxResultCount': 20,
       };
@@ -975,7 +1015,7 @@ class GeminiOutingService {
       return reqBody;
     }).toList();
 
-    final placeList = <dynamic>[];
+    final placeEntries = <(SpotCategory?, Map<String, dynamic>)>[];
     final responses = await Future.wait(
       requests.map(
         (reqBody) => http
@@ -994,16 +1034,22 @@ class GeminiOutingService {
       ),
     );
 
-    for (final response in responses) {
+    for (var i = 0; i < responses.length; i++) {
+      final response = responses[i];
+      final sourceCat = queryTasks[i].$1;
       if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
         final decoded =
             jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
         final items = decoded['places'] as List<dynamic>? ?? [];
-        placeList.addAll(items);
+        for (final item in items) {
+          if (item is Map<String, dynamic>) {
+            placeEntries.add((sourceCat, item));
+          }
+        }
       }
     }
 
-    if (placeList.isEmpty) {
+    if (placeEntries.isEmpty) {
       return null;
     }
 
@@ -1011,8 +1057,9 @@ class GeminiOutingService {
     final liveSpots = <OutingSpot>[];
     final seenPlaceIds = <String>{};
 
-    for (final raw in placeList) {
-      if (raw is! Map<String, dynamic>) continue;
+    for (final entry in placeEntries) {
+      final sourceCat = entry.$1;
+      final raw = entry.$2;
 
       final id = raw['id'] as String? ?? 'place_${liveSpots.length}';
       if (seenPlaceIds.contains(id)) continue;
@@ -1136,12 +1183,21 @@ class GeminiOutingService {
       // カテゴリとタグの決定
       final rawTypes = raw['types'] as List<dynamic>? ?? [];
       final placeTypes = rawTypes.map((e) => e.toString()).toList();
-      final SpotCategory category = targetCategory ??
-          _guessSpotCategory(
-            rawTitle,
-            editorial ?? '',
-            placeTypes: placeTypes,
-          );
+      final guessedCategory = _guessSpotCategory(
+        rawTitle,
+        editorial ?? '',
+        placeTypes: placeTypes,
+      );
+      final SpotCategory category;
+      if (effectiveCategories.length == 1) {
+        category = effectiveCategories.first;
+      } else if (effectiveCategories.length > 1) {
+        category = effectiveCategories.contains(guessedCategory)
+            ? guessedCategory
+            : (sourceCat ?? effectiveCategories.first);
+      } else {
+        category = guessedCategory;
+      }
 
       // おすすめポイント（Googleマップのレビューとは分離し、スポット自体の魅力・特徴・設備を表示）
       final points = <String>[];
@@ -1267,8 +1323,9 @@ class GeminiOutingService {
       aggregatedSpots.sort((a, b) => a.driveMinutes.compareTo(b.driveMinutes));
     }
 
-    final genreLabel =
-        targetCategory?.label ?? (query.isEmpty ? 'おすすめスポット' : '「$query」');
+    final genreLabel = effectiveCategories.isNotEmpty
+        ? effectiveCategories.map((c) => c.label).join('・')
+        : (query.isEmpty ? 'おすすめスポット' : '「$query」');
     return AiSearchResult(
       aiSummaryComment: isMapSearch
           ? '🗺️ 地図の表示エリア（$areaName）周辺にある【$genreLabel】を ${aggregatedSpots.length}件 取得しました！ピンをタップして「❤️」で登録できます。'
@@ -1535,11 +1592,17 @@ $candidateListText
     required String query,
     required String areaLabel,
     SpotCategory? targetCategory,
+    Set<SpotCategory>? targetCategories,
     double? userLat,
     double? userLng,
   }) {
     final startLat = userLat ?? 38.3866;
     final startLng = userLng ?? 140.8712;
+
+    final effectiveCategories = <SpotCategory>{...?targetCategories};
+    if (targetCategory != null) {
+      effectiveCategories.add(targetCategory);
+    }
 
     var spots = getInitialSpots().map((s) {
       final distKm = LocationService.calculateDistanceKm(
@@ -1552,22 +1615,19 @@ $candidateListText
       return s.copyWith(distanceKm: distKm, driveMinutes: driveMin);
     }).toList();
 
-    if (targetCategory != null) {
-      final filtered =
-          spots.where((s) => s.category == targetCategory).toList();
-      if (filtered.isNotEmpty) {
-        spots = filtered;
-      } else {
-        // 指定ジャンルと異なるスポット（温泉など）が誤って表示されるのを防止
-        spots = spots.where((s) => s.category == targetCategory).toList();
-      }
+    if (effectiveCategories.isNotEmpty) {
+      spots = spots
+          .where((s) => effectiveCategories.contains(s.category))
+          .toList();
     }
 
     spots.sort((a, b) => a.driveMinutes.compareTo(b.driveMinutes));
 
+    final label = effectiveCategories.isNotEmpty
+        ? effectiveCategories.map((c) => c.label).join('・')
+        : 'おすすめスポット';
     return AiSearchResult(
-      aiSummaryComment:
-          '📍 【$areaLabel】の【${targetCategory?.label ?? "おすすめスポット"}】を表示しています。',
+      aiSummaryComment: '📍 【$areaLabel】の【$label】を表示しています。',
       spots: spots,
       isLiveAi: true,
     );

@@ -137,8 +137,8 @@ class _HomeScreenState extends State<HomeScreen> {
     TohokuRegion.miyagi.centerLng,
   );
 
-  /// ドライブ地図上で選択中の周辺検索カテゴリ
-  SpotCategory? _mapAreaCategory;
+  /// ドライブ地図上で選択中の周辺検索カテゴリ（複数選択対応）
+  Set<SpotCategory> _mapAreaCategories = {};
 
   /// 夫婦共有ルームの合言葉（初期は空文字で端末内のみ）
   String _coupleRoomCode = '';
@@ -564,6 +564,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // ジャンル設定で非表示にしている標準カテゴリ（温泉・神社仏閣など）を除外する
       if (_selectedCategory == null &&
           _selectedCustomGenre == null &&
+          _mapAreaCategories.isEmpty &&
           !hasCustomTextQuery &&
           spot.id != _anchorSpot?.id &&
           SpotCategory.commercialCategories.contains(spot.category) &&
@@ -1367,13 +1368,20 @@ class _HomeScreenState extends State<HomeScreen> {
     _applySearchResultToState(result, currentFavs, keepAnchorSpot: false);
   }
 
-  /// ドライブ地図（タブ2）で「この地図エリア周辺」の立ち寄りスポット（温泉・神社・公園等）を検索する
+  /// ドライブ地図（タブ2）で「この地図エリア周辺」の立ち寄りスポット（複数ジャンル同時選択可）を検索する
   Future<void> _runMapAreaSearch({
     SpotCategory? category,
+    Set<SpotCategory>? categories,
     String? customQuery,
     OutingSpot? centerOnSpot,
   }) async {
     if (!await _consumeSearchQuotaOrShowAd()) return;
+
+    final nextCategories = categories != null
+        ? Set<SpotCategory>.from(categories)
+        : (category != null
+            ? <SpotCategory>{category}
+            : Set<SpotCategory>.from(_mapAreaCategories));
 
     final targetCenter = centerOnSpot != null
         ? LatLng(centerOnSpot.latitude, centerOnSpot.longitude)
@@ -1385,7 +1393,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     setState(() {
       _isSearchingAi = true;
-      _mapAreaCategory = category;
+      _mapAreaCategories = nextCategories;
       _selectedCategory = null; // 基準スポットも周辺スポットも両方地図に表示するためフィルタ解除
       _isMapListExpanded = true; // 検索結果リストを自動展開
       if (centerOnSpot != null) {
@@ -1409,7 +1417,8 @@ class _HomeScreenState extends State<HomeScreen> {
       currentSpots: _allSpots,
       userLat: _currentLocation?.latitude,
       userLng: _currentLocation?.longitude,
-      targetCategory: category,
+      targetCategory: nextCategories.length == 1 ? nextCategories.first : null,
+      targetCategories: nextCategories,
       selectedRegion: _selectedRegion,
       targetDateRange: _targetDateRange,
       searchCenterLat: targetCenter.latitude,
@@ -1421,7 +1430,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _applySearchResultToState(result, currentFavs, keepAnchorSpot: true);
 
     if (mounted) {
-      final label = category?.label ?? (queryText.isNotEmpty ? queryText : 'スポット');
+      final label = nextCategories.isNotEmpty
+          ? nextCategories.map((c) => c.label).join('・')
+          : (queryText.isNotEmpty ? queryText : 'スポット');
       ScaffoldMessenger.of(context).clearSnackBars();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1524,8 +1535,12 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  /// イベントやスポットを地図の中心に据えて、周辺の立ち寄り先（温泉・神社等）を探すモードへ移行
-  void _jumpToMapAndSearchNearby(OutingSpot baseSpot, [SpotCategory? initialNearbyCategory]) {
+  /// イベントやスポットを地図の中心に据えて、周辺の立ち寄り先（単一・複数ジャンル）を探すモードへ移行
+  void _jumpToMapAndSearchNearby(
+    OutingSpot baseSpot, [
+    SpotCategory? initialNearbyCategory,
+    Set<SpotCategory>? initialNearbyCategories,
+  ]) {
     setState(() {
       _anchorSpot = baseSpot;
       _selectedMapSpot = baseSpot;
@@ -1539,9 +1554,13 @@ class _HomeScreenState extends State<HomeScreen> {
         12.5,
       ),
     );
-    if (initialNearbyCategory != null) {
+    final targetCats = initialNearbyCategories ??
+        (initialNearbyCategory != null
+            ? <SpotCategory>{initialNearbyCategory}
+            : null);
+    if (targetCats != null && targetCats.isNotEmpty) {
       _runMapAreaSearch(
-        category: initialNearbyCategory,
+        categories: targetCats,
         centerOnSpot: baseSpot,
       );
     }
@@ -1550,7 +1569,7 @@ class _HomeScreenState extends State<HomeScreen> {
   /// ドライブ地図の周辺ジャンル絞り込みをOFF（クリア）に戻す
   void _clearMapAreaCategory() {
     setState(() {
-      _mapAreaCategory = null;
+      _mapAreaCategories = {};
       _anchorSpot = null;
       _activeSearchResultIds = null;
     });
@@ -3535,12 +3554,20 @@ class _HomeScreenState extends State<HomeScreen> {
                           spot.category == SpotCategory.dining ||
                               spot.category == SpotCategory.gourmet;
                       return FilledButton.tonalIcon(
-                        onPressed: () => _jumpToMapAndSearchNearby(
-                          spot,
-                          isDiningSpot
-                              ? SpotCategory.tourism
-                              : SpotCategory.dining,
-                        ),
+                        onPressed: () => isDiningSpot
+                            ? _jumpToMapAndSearchNearby(
+                                spot,
+                                null,
+                                const {
+                                  SpotCategory.tourism,
+                                  SpotCategory.park,
+                                  SpotCategory.indoor,
+                                },
+                              )
+                            : _jumpToMapAndSearchNearby(
+                                spot,
+                                SpotCategory.dining,
+                              ),
                         style: FilledButton.styleFrom(
                           visualDensity: VisualDensity.compact,
                         ),
@@ -3761,7 +3788,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: TextField(
                           controller: _mapSearchController,
                           onSubmitted: (val) => _runMapAreaSearch(
-                            category: _mapAreaCategory,
+                            categories: _mapAreaCategories,
                             customQuery: val,
                           ),
                           style: const TextStyle(fontSize: 13),
@@ -3791,7 +3818,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       onPressed: _isSearchingAi
                           ? null
                           : () => _runMapAreaSearch(
-                                category: _mapAreaCategory,
+                                categories: _mapAreaCategories,
                                 customQuery: _mapSearchController.text,
                               ),
                       style: FilledButton.styleFrom(
@@ -3843,7 +3870,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 scrollDirection: Axis.horizontal,
                 child: Row(
                   children: [
-                    if (_mapAreaCategory != null)
+                    if (_mapAreaCategories.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(right: 6),
                         child: SafeActionChip(
@@ -4166,9 +4193,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// ドライブ地図上部のジャンルチップ1個分（もう一度押すとOFF/クリアになる）
+  /// ドライブ地図上部のジャンルチップ1個分（複数同時選択・再タップで個別OFF可能）
   Widget _buildMapGenreChip(SpotCategory category, String label) {
-    final isSelected = _mapAreaCategory == category;
+    final isSelected = _mapAreaCategories.contains(category);
     return Padding(
       padding: const EdgeInsets.only(right: 6),
       child: SafeActionChip(
@@ -4191,10 +4218,17 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: _isSearchingAi
             ? null
             : () {
+                final next = Set<SpotCategory>.from(_mapAreaCategories);
                 if (isSelected) {
+                  next.remove(category);
+                } else {
+                  next.add(category);
+                }
+                if (next.isEmpty &&
+                    _mapSearchController.text.trim().isEmpty) {
                   _clearMapAreaCategory();
                 } else {
-                  _runMapAreaSearch(category: category);
+                  _runMapAreaSearch(categories: next);
                 }
               },
       ),
