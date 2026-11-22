@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="おでかけナビ（Androidアプリ・Web版）のプライバシーポリシー・免責事項・お問い合わせ窓口">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <title>プライバシーポリシー・免責事項 | おでかけナビ</title>
+  <style>
+    :root {
+      --bg-light: #f6faf9;
+      --bg-dark: #0f1716;
+      --surface-light: #ffffff;
+      --surface-dark: #182322;
+      --text-light: #1a2423;
+      --text-dark: #e6f0ee;
+      --muted-light: #4f6361;
+      --muted-dark: #9eb5b2;
+      --brand-light: #00796b;
+      --brand-dark: #4db6ac;
+      --brand-ink-light: #ffffff;
+      --brand-ink-dark: #07211e;
+      --border-light: #d7e5e2;
+      --border-dark: #2c3e3c;
+      --notice-bg-light: #e8f5f3;
+      --notice-bg-dark: #152d2a;
+
+      --bg: var(--bg-light);
+      --surface: var(--surface-light);
+      --text: var(--text-light);
+      --muted: var(--muted-light);
+      --brand: var(--brand-light);
+      --brand-ink: var(--brand-ink-light);
+      --border: var(--border-light);
+      --notice-bg: var(--notice-bg-light);
+
+      color-scheme: light dark;
+      accent-color: var(--brand);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: var(--bg-dark);
+        --surface: var(--surface-dark);
+        --text: var(--text-dark);
+        --muted: var(--muted-dark);
+        --brand: var(--brand-dark);
+        --brand-ink: var(--brand-ink-dark);
+        --border: var(--border-dark);
+        --notice-bg: var(--notice-bg-dark);
+      }
+    }
+
+    @supports (color: light-dark(white, black)) {
+      :root {
+        --bg: light-dark(var(--bg-light), var(--bg-dark));
+        --surface: light-dark(var(--surface-light), var(--surface-dark));
+        --text: light-dark(var(--text-light), var(--text-dark));
+        --muted: light-dark(var(--muted-light), var(--muted-dark));
+        --brand: light-dark(var(--brand-light), var(--brand-dark));
+        --brand-ink: light-dark(var(--brand-ink-light), var(--brand-ink-dark));
+        --border: light-dark(var(--border-light), var(--border-dark));
+        --notice-bg: light-dark(var(--notice-bg-light), var(--notice-bg-dark));
+      }
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif;
+      font-size: 1rem;
+      line-height: 1.75;
+      text-align: start;
+      overflow-wrap: anywhere;
+    }
+
+    .page-wrap {
+      max-inline-size: 48rem;
+      margin-inline: auto;
+      padding: clamp(1rem, 3vw, 2rem) 1rem 3rem;
+    }
+
+    header.site-header {
+      margin-block-end: 1.5rem;
+      padding-block-end: 1rem;
+      border-block-end: 1px solid var(--border);
+    }
+
+    .app-label {
+      margin: 0 0 0.25rem;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--brand);
+    }
+
+    h1 {
+      margin: 0 0 0.5rem;
+      font-size: clamp(1.35rem, 1.1rem + 1.2vw, 1.85rem);
+      line-height: 1.35;
+      text-wrap: balance;
+    }
+
+    .meta-date {
+      margin: 0;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    main.card {
+      background-color: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      padding: clamp(1.1rem, 3vw, 2rem);
+    }
+
+    section + section {
+      margin-block-start: 1.75rem;
+      padding-block-start: 1.5rem;
+      border-block-start: 1px solid var(--border);
+    }
+
+    h2 {
+      margin: 0 0 0.65rem;
+      font-size: 1.15rem;
+      line-height: 1.4;
+      color: var(--brand);
+      text-wrap: balance;
+    }
+
+    p {
+      margin: 0 0 0.75rem;
+      max-inline-size: 65ch;
+      text-wrap: pretty;
+    }
+
+    p:last-child {
+      margin-block-end: 0;
+    }
+
+    ul {
+      margin: 0.5rem 0 0.75rem;
+      padding-inline-start: 1.35rem;
+      max-inline-size: 65ch;
+    }
+
+    li + li {
+      margin-block-start: 0.45rem;
+    }
+
+    a {
+      color: var(--brand);
+      text-underline-offset: 0.18em;
+    }
+
+    .callout {
+      margin-block-start: 0.75rem;
+      padding: 0.85rem 1rem;
+      background-color: var(--notice-bg);
+      border-inline-start: 4px solid var(--brand);
+      border-radius: 0.5rem;
+    }
+
+    .actions {
+      margin-block-start: 1.75rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-block-size: 2.75rem;
+      padding: 0.55rem 1.25rem;
+      background-color: var(--brand);
+      color: var(--brand-ink);
+      text-decoration: none;
+      font-weight: 700;
+      border-radius: 999px;
+    }
+
+    .back-link:focus-visible,
+    a:focus-visible {
+      outline: 2px solid var(--brand);
+      outline-offset: 3px;
+    }
+
+    footer {
+      margin-block-start: 1.5rem;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="page-wrap">
+    <header class="site-header">
+      <p class="app-label">おでかけナビ（Android アプリ / Web 版）</p>
+      <h1>プライバシーポリシー・免責事項</h1>
+      <p class="meta-date">制定日：2026年11月22日</p>
+    </header>
+
+    <main class="card">
+      <section aria-labelledby="sec-overview">
+        <h2 id="sec-overview">1. はじめに</h2>
+        <p>
+          「おでかけナビ」（Android アプリ版および Web 版、以下「本サービス」といいます）は、ご利用者のプライバシーを尊重し、個人情報保護に関する法令および各プラットフォームのガイドラインを遵守して適切に取り扱います。
+        </p>
+      </section>
+
+      <section aria-labelledby="sec-collection">
+        <h2 id="sec-collection">2. 取得する情報と利用目的</h2>
+        <ul>
+          <li>
+            <strong>現在地情報（位置情報）：</strong>
+            「現在地」ボタンやドライブ地図上での周辺スポット検索・距離や移動時間の計算のためにのみ使用します。現在地情報を運営者のサーバーへ記録・保存することはありません。
+          </li>
+          <li>
+            <strong>お気に入り・訪問記録・旅のしおりデータ：</strong>
+            通常はお使いの端末内（ローカルストレージ）にのみ保存されます。ご利用者自身が「家族共有（合言葉同期）」機能を有効にして保存操作を行った場合に限り、指定された合言葉に紐づけてクラウド（Firebase Realtime Database）へ保存・共有されます。
+          </li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="sec-third-party">
+        <h2 id="sec-third-party">3. 第三者提供サービス・広告配信について</h2>
+        <p>本サービスは、機能提供および広告配信のために以下の外部サービスを利用しています。</p>
+        <ul>
+          <li>
+            <strong>Google AdMob（Android アプリ版）：</strong>
+            広告配信のため、広告識別子（広告 ID）やデバイス情報・広告表示履歴等を自動的に取得する場合があります。Google によるデータの使用および広告のカスタマイズ無効化については、
+            <a href="https://policies.google.com/technologies/ads?hl=ja" target="_blank" rel="noopener noreferrer">Google の広告に関するポリシー</a>
+            をご確認ください。
+          </li>
+          <li>
+            <strong>Google Maps Platform / Places API：</strong>
+            地図表示および施設・飲食店・公園等のスポット情報検索のために利用しています。あわせて
+            <a href="https://policies.google.com/privacy?hl=ja" target="_blank" rel="noopener noreferrer">Google プライバシーポリシー</a>
+            が適用されます。
+          </li>
+          <li>
+            <strong>気象庁 防災情報データ：</strong>
+            対象地域の週末・週間天気予報を表示するために気象庁が公開する気象データを使用しています。
+          </li>
+          <li>
+            <strong>Firebase（Google LLC）：</strong>
+            Web 版のホスティングおよびユーザーが任意で操作した家族間合言葉同期機能の提供に利用しています。
+          </li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="sec-affiliate">
+        <h2 id="sec-affiliate">4. アフィリエイトプログラム（PR表記）について</h2>
+        <p>
+          本サービスは、じゃらんnet（A8.net）、楽天トラベル・楽天市場（楽天アフィリエイト）、アソビュー！、Amazonアソシエイトなどのアフィリエイトプログラムに参加しており、サービス内のリンクやカードに広告（PR）が含まれる場合があります。
+        </p>
+        <div class="callout">
+          <p>Amazonのアソシエイトとして、おでかけナビは適格販売により収入を得ています。</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="sec-disclaimer">
+        <h2 id="sec-disclaimer">5. 免責事項</h2>
+        <p>
+          本サービスに掲載されているスポットの営業時間・定休日・利用料金・駐車場の有無・混雑状況および天気予報等の情報は、正確な提供に努めておりますが、その完全性・正確性・最新性・安全性を保証するものではありません。実際にお出かけになる際は、必ず各施設の公式サイトや現地の案内、最新の気象情報をご確認ください。
+        </p>
+        <p>
+          また、本サービス内の外部リンク先（予約サイト・地図アプリ・販売サイト等）で提供される情報・サービスおよびご利用者間・事業者間で生じた損害やトラブル等について、運営者は一切の責任を負いかねます。
+        </p>
+      </section>
+
+      <section aria-labelledby="sec-contact">
+        <h2 id="sec-contact">6. プライバシーポリシーの変更およびお問い合わせ</h2>
+        <p>
+          本ポリシーの内容は、法令の改正やサービス内容の変更に応じて予告なく改定することがあります。本サービスに関するお問い合わせは、下記窓口までご連絡ください。
+        </p>
+        <p>
+          <strong>運営者連絡先：</strong>
+          <a href="mailto:weekend.outing.app@gmail.com">weekend.outing.app@gmail.com</a>
+        </p>
+      </section>
+
+      <div class="actions">
+        <a class="back-link" href="/">「おでかけナビ」トップへ戻る</a>
+      </div>
+    </main>
+
+    <footer>
+      <p>&copy; 2026 おでかけナビ</p>
+    </footer>
+  </div>
+</body>
+</html>

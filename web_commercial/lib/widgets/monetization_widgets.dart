@@ -1,5 +1,6 @@
 // 商用版UIウィジェット：バナー広告枠・インフィードネイティブPR枠・リワード動画回復・プレミアムプランシート
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../services/monetization_service.dart';
 
@@ -335,6 +336,7 @@ Future<void> showPremiumPlanSheet(
   required int remainingSearches,
   required ValueChanged<bool> onTogglePremium,
   required VoidCallback onResetQuota,
+  VoidCallback? onOpenPrivacyPolicy,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
@@ -463,69 +465,84 @@ Future<void> showPremiumPlanSheet(
                     desc: '大阪/名古屋/北海道など旅行ごとに何冊でも作成可能',
                   ),
 
-                  const Divider(height: 24),
-
-                  // オーナーテスト・プレビュー用の切替セクション
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.teal.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.teal.shade200),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          '🛠️ 動作プレビュー切替（開発・確認用）',
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF004D40),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
-                          title: const Text(
-                            'プレミアム会員モードをONにする',
+                  // オーナーテスト・プレビュー用の切替セクション（リリースビルド時は自動非表示）
+                  if (kDebugMode) ...[
+                    const Divider(height: 24),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.teal.shade200),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '🛠️ 動作プレビュー切替（開発・確認用）',
                             style: TextStyle(
-                              fontSize: 13,
+                              fontSize: 12.5,
                               fontWeight: FontWeight.bold,
+                              color: Color(0xFF004D40),
                             ),
                           ),
-                          subtitle: const Text(
-                            'OFFにすると広告表示・検索制限ありのフリープラン挙動を確認できます',
-                            style: TextStyle(fontSize: 11),
-                          ),
-                          value: localPremium,
-                          onChanged: (val) {
-                            setSheetState(() => localPremium = val);
-                            onTogglePremium(val);
-                          },
-                        ),
-                        if (!localPremium)
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton.icon(
-                              onPressed: () {
-                                onResetQuota();
-                                setSheetState(() {
-                                  localRemaining =
-                                      MonetizationService.freeDailySearchLimit;
-                                });
-                              },
-                              icon: const Icon(Icons.refresh, size: 16),
-                              label: const Text(
-                                '本日の無料検索回数を5回にリセット',
-                                style: TextStyle(fontSize: 12),
+                          const SizedBox(height: 4),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                            title: const Text(
+                              'プレミアム会員モードをONにする',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
+                            subtitle: const Text(
+                              'OFFにすると広告表示・検索制限ありのフリープラン挙動を確認できます',
+                              style: TextStyle(fontSize: 11),
+                            ),
+                            value: localPremium,
+                            onChanged: (val) {
+                              setSheetState(() => localPremium = val);
+                              onTogglePremium(val);
+                            },
                           ),
-                      ],
+                          if (!localPremium)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton.icon(
+                                onPressed: () {
+                                  onResetQuota();
+                                  setSheetState(() {
+                                    localRemaining = MonetizationService
+                                        .freeDailySearchLimit;
+                                  });
+                                },
+                                icon: const Icon(Icons.refresh, size: 16),
+                                label: const Text(
+                                  '本日の無料検索回数を5回にリセット',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
+                  ],
+                  if (onOpenPrivacyPolicy != null) ...[
+                    const Divider(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton.icon(
+                        onPressed: onOpenPrivacyPolicy,
+                        icon: const Icon(Icons.privacy_tip_outlined, size: 18),
+                        label: const Text(
+                          'プライバシーポリシー・免責事項・お問い合わせ',
+                          style: TextStyle(fontSize: 12.5),
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,

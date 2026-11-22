@@ -187,6 +187,10 @@ class MonetizationService {
   static const int freeMaxFavorites = 10;
   static const int freeMaxTrips = 1;
 
+  /// 公開プライバシーポリシー・免責事項URL
+  static const String privacyPolicyUrl =
+      'https://odekake-navi-5f6b3.web.app/privacy.html';
+
   /// 今日の日付キー（YYYY-MM-DD）
   static String _todayKey([DateTime? now]) {
     final d = now ?? DateTime.now();

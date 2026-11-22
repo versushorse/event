@@ -1278,6 +1278,8 @@ class _HomeScreenState extends State<HomeScreen> {
         if (!mounted) return;
         setState(() => _remainingSearches = resetVal);
       },
+      onOpenPrivacyPolicy: () =>
+          _launchWebUrl(MonetizationService.privacyPolicyUrl),
     );
   }
 
