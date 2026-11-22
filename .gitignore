@@ -55,3 +55,6 @@ app.*.map.json
 firebase-credentials.json
 .firebase/
 firebase-debug.log
+**/key.properties
+**/*.jks
+**/*.keystore

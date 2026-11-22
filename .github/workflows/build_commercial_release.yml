@@ -1,0 +1,104 @@
+# 商用 Android 版（おでかけナビ）Google Play 用 AAB・APK 自動ビルドワークフロー
+name: 商用Android版 リリースビルド（AAB / APK）
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build_commercial_release:
+    name: リリース AAB / APK ビルド
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          ref: commercial-edition
+
+      - name: Java 17 をセットアップ
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Flutter SDK（3.41.6）をセットアップ
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.41.6"
+          channel: stable
+          cache: true
+
+      - name: シークレットからビルド設定ファイルと署名鍵を一時生成
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          FIREBASE_REALTIME_DB_URL: ${{ secrets.FIREBASE_REALTIME_DB_URL }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
+            echo "::error::GitHub Secrets に GOOGLE_MAPS_API_KEY が設定されていません。"
+            exit 1
+          fi
+
+          # 商用アプリ用API設定ファイルを一時生成（Geminiキーは空にして保護）
+          mkdir -p lib/config
+          {
+            printf "// CI/CDビルド用の一時生成ファイル\n"
+            printf "class AppApiKeys {\n"
+            printf "  static const String geminiApiKey = '';\n"
+            printf "  static const String googleMapsApiKey = '%s';\n" "$GOOGLE_MAPS_API_KEY"
+            printf "  static const String firebaseRealtimeDbUrl = '%s';\n" "$FIREBASE_REALTIME_DB_URL"
+            printf "}\n"
+          } > lib/config/api_keys.local.dart
+
+          # Android Manifest用 Maps API キーを local.properties に出力
+          mkdir -p android
+          printf "maps.apiKey=%s\n" "$GOOGLE_MAPS_API_KEY" >> android/local.properties
+
+          # Keystoreシークレットが揃っていればリリース署名設定を作成
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            printf "%s" "$ANDROID_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > android/app/upload-keystore.jks
+            {
+              printf "storePassword=%s\n" "$ANDROID_KEYSTORE_PASSWORD"
+              printf "keyPassword=%s\n" "$ANDROID_KEY_PASSWORD"
+              printf "keyAlias=%s\n" "$ANDROID_KEY_ALIAS"
+              printf "storeFile=upload-keystore.jks\n"
+            } > android/key.properties
+            echo "リリース署名（upload-keystore.jks）を適用しました。"
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 が未設定のため、デバッグ署名にフォールバックします（Google Play 提出時は Keystore シークレットを設定してください）。"
+          fi
+
+      - name: 依存パッケージ取得・静的解析・テスト実行
+        run: |
+          flutter pub get
+          flutter analyze lib test
+          flutter test
+
+      - name: Google Play 提出用 App Bundle（.aab）をビルド
+        run: flutter build appbundle --release
+
+      - name: 実機確認用リリース APK（.apk）をビルド
+        run: flutter build apk --release
+
+      - name: Google Play 用 AAB をアップロード
+        uses: actions/upload-artifact@v4
+        with:
+          name: odekake-navi-release-aab
+          path: build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 実機確認用リリース APK をアップロード
+        uses: actions/upload-artifact@v4
+        with:
+          name: odekake-navi-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 一時生成した機密ファイルを削除
+        if: always()
+        run: rm -f lib/config/api_keys.local.dart android/local.properties android/key.properties android/app/upload-keystore.jks

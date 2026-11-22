@@ -13,7 +13,16 @@ val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
-val mapsApiKey = localProperties.getProperty("maps.apiKey") ?: ""
+val mapsApiKey = localProperties.getProperty("maps.apiKey")
+    ?: System.getenv("GOOGLE_MAPS_API_KEY")
+    ?: ""
+
+// Google Play 公開用のリリース署名設定（android/key.properties がある場合のみ有効化）
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+}
 
 android {
     namespace = "com.example.weekend_outing.weekend_outing"
@@ -29,6 +38,20 @@ android {
         jvmTarget = JavaVersion.VERSION_17.toString()
     }
 
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                val storeFilePath = keystoreProperties.getProperty("storeFile")
+                if (!storeFilePath.isNullOrBlank()) {
+                    storeFile = project.file(storeFilePath)
+                }
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "jp.weekendouting.app"
         minSdk = flutter.minSdkVersion
@@ -40,7 +63,11 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             firebaseAppDistribution {
                 appId = "1:54317410205:android:da8dae713cbf2e680a3174"
                 serviceCredentialsFile = project.file("firebase-credentials.json").absolutePath
