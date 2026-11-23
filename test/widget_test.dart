@@ -51,6 +51,10 @@ void main() {
     expect(find.text('広告非表示'), findsNothing);
     expect(find.byTooltip('ℹ️ アプリ情報・規約'), findsOneWidget);
 
+    // 狭いスマホ画面でも見切れない検索残り回数バー＆回復ボタンが表示されることを確認
+    expect(find.text('🔍 本日の検索 残り10回'), findsOneWidget);
+    expect(find.text('🎬 +5回回復'), findsOneWidget);
+
     // 商用版ではセキュリティ対策とアップデート余白のため、夫婦の好みAIナビ（Gemini）は無効化されていることを確認
     expect(find.text('夫婦の好みAIナビ'), findsNothing);
 

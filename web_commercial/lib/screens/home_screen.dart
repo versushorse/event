@@ -1349,30 +1349,53 @@ class _HomeScreenState extends State<HomeScreen> {
     bool recovered = false;
     await showSearchQuotaExceededDialog(
       context,
-      onRewardCompleted: () async {
+      onRewardCompleted: () {
         recovered = true;
-        final newRem = await MonetizationService.grantRewardSearchBonus();
-        if (!mounted) return;
-        setState(() => _remainingSearches = newRem);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '🎬 広告視聴ありがとうございます！検索回数が +${MonetizationService.rewardRecoveryAmount}回（残り$newRem回）回復しました',
-            ),
-          ),
-        );
       },
       onOpenPremium: _openPremiumSheet,
     );
     if (recovered) {
+      await MonetizationService.grantRewardSearchBonus();
       final retryOk = await MonetizationService.tryConsumeSearch();
       final afterRem = await MonetizationService.getRemainingSearches();
       if (mounted) {
         setState(() => _remainingSearches = afterRem);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '🎬 広告視聴ありがとうございます！+${MonetizationService.rewardRecoveryAmount}回回復し、検索を実行します（1回消費・残り$afterRem回）',
+            ),
+          ),
+        );
       }
       return retryOk;
     }
     return false;
+  }
+
+  /// 検索枠回復ボタンから広告視聴して検索回数を単独回復する（検索自体は消費しない）
+  Future<void> _recoverSearchQuotaManually() async {
+    if (!mounted) return;
+    bool recovered = false;
+    await showSearchQuotaExceededDialog(
+      context,
+      isStandaloneRecovery: true,
+      onRewardCompleted: () {
+        recovered = true;
+      },
+      onOpenPremium: _openPremiumSheet,
+    );
+    if (!recovered) return;
+    final newRem = await MonetizationService.grantRewardSearchBonus();
+    if (!mounted) return;
+    setState(() => _remainingSearches = newRem);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '🎬 広告視聴ありがとうございます！検索回数が +${MonetizationService.rewardRecoveryAmount}回（残り$newRem回）回復しました',
+        ),
+      ),
+    );
   }
 
   /// 通常検索（地域タブ＋フリーワード＋ジャンル）を実行する
@@ -2307,7 +2330,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                   ),
                   Text(
-                    'エリア: ${_isCurrentLocationSelected ? "現在地（${_currentLocation?.label ?? _selectedRegion.label}）" : _selectedRegion.label} ｜ ${(MonetizationService.enablePremiumSubscription && _isPremium) ? "👑 プレミアム" : "🔍 本日の検索 残り$_remainingSearches回"}',
+                    'エリア: ${_isCurrentLocationSelected ? "現在地（${_currentLocation?.label ?? _selectedRegion.label}）" : _selectedRegion.label}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -2505,6 +2528,67 @@ class _HomeScreenState extends State<HomeScreen> {
   );
 }
 
+  /// 狭いスマホ画面でも見切れない検索残り回数＆ワンタップ回復バー
+  Widget _buildSearchQuotaBar(ColorScheme colorScheme) {
+    final isZero = _remainingSearches <= 0;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: isZero ? Colors.orange.shade50 : colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isZero ? Colors.orange.shade300 : colorScheme.outlineVariant,
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '🔍 本日の検索 残り$_remainingSearches回',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.bold,
+                color: isZero
+                    ? Colors.deepOrange.shade800
+                    : colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Material(
+            color: isZero
+                ? Colors.deepOrange.shade600
+                : colorScheme.secondaryContainer,
+            borderRadius: BorderRadius.circular(20),
+            child: InkWell(
+              onTap: _recoverSearchQuotaManually,
+              borderRadius: BorderRadius.circular(20),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                child: Text(
+                  isZero
+                      ? '🎬 広告で+${MonetizationService.rewardRecoveryAmount}回回復'
+                      : '🎬 +${MonetizationService.rewardRecoveryAmount}回回復',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.bold,
+                    color: isZero
+                        ? Colors.white
+                        : colorScheme.onSecondaryContainer,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// タブ1：東北6県タブ・Google検索ベース・天気予報・ジャンル別スポット検索画面
   Widget _buildExploreTab(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -2522,6 +2606,9 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (!(MonetizationService.enablePremiumSubscription &&
+                    _isPremium))
+                  _buildSearchQuotaBar(colorScheme),
                 // 1. フリーワード検索ボックス（目的地＋下のジャンルボタンで周辺検索も可能）
                 TextField(
                   controller: _searchController,

@@ -220,6 +220,7 @@ Future<void> showSearchQuotaExceededDialog(
   BuildContext context, {
   required VoidCallback onRewardCompleted,
   required VoidCallback onOpenPremium,
+  bool isStandaloneRecovery = false,
 }) async {
   await showDialog<void>(
     context: context,
@@ -253,13 +254,16 @@ Future<void> showSearchQuotaExceededDialog(
           }
 
           return AlertDialog(
-            title: const Row(
+            title: Row(
               children: [
-                Text('🔍 ', style: TextStyle(fontSize: 22)),
+                const Text('🔍 ', style: TextStyle(fontSize: 22)),
                 Expanded(
                   child: Text(
-                    '本日の検索枠を使い切りました',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                    isStandaloneRecovery ? '検索回数を回復する' : '本日の検索枠を使い切りました',
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
@@ -299,7 +303,9 @@ Future<void> showSearchQuotaExceededDialog(
                         MonetizationService.enablePremiumSubscription
                             ? '• 🎬 短い動画広告を見ると +${MonetizationService.rewardRecoveryAmount}回 すぐ回復！\n'
                                 '• 👑 ファミリープレミアムなら検索無制限＆広告なし'
-                            : '• 🎬 短い案内を見ると +${MonetizationService.rewardRecoveryAmount}回 すぐ回復！（何度でも無料でご利用いただけます）',
+                            : (isStandaloneRecovery
+                                ? '• 🎬 短い案内を見ると、本日の検索回数が +${MonetizationService.rewardRecoveryAmount}回 追加されます（何度でも無料でご利用いただけます）'
+                                : '• 🎬 短い案内を見ると +${MonetizationService.rewardRecoveryAmount}回 回復し、そのまま検索を実行します（今回の検索で1回消費されます）'),
                         style: const TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w600,
@@ -326,8 +332,10 @@ Future<void> showSearchQuotaExceededDialog(
                     FilledButton.icon(
                       onPressed: startSimulatedRewardAd,
                       icon: const Icon(Icons.play_circle_outline, size: 18),
-                      label: const Text(
-                        '広告で+${MonetizationService.rewardRecoveryAmount}回回復',
+                      label: Text(
+                        isStandaloneRecovery
+                            ? '広告で+${MonetizationService.rewardRecoveryAmount}回回復'
+                            : '広告を見て+${MonetizationService.rewardRecoveryAmount}回回復＆検索',
                       ),
                     ),
                   ],
