@@ -58,3 +58,4 @@ firebase-debug.log
 **/key.properties
 **/*.jks
 **/*.keystore
+/zip/

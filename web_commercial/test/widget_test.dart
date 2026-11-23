@@ -47,8 +47,9 @@ void main() {
     expect(find.text('期間限定イベント'), findsNothing);
     expect(find.text('Googleで宮城県のイベント検索'), findsOneWidget);
 
-    // 下部広告バナー枠の非表示リンク（プレミアム案内）が表示されていることを確認
-    expect(find.text('広告非表示'), findsOneWidget);
+    // 課金UI無効時は下部広告バナーの「広告非表示」ボタンが非表示で、アプリ情報ボタンが表示されることを確認
+    expect(find.text('広告非表示'), findsNothing);
+    expect(find.byTooltip('ℹ️ アプリ情報・規約'), findsOneWidget);
 
     // Web版ではGemini APIキー非保持のため、夫婦の好みAIナビが非表示であることを確認
     expect(find.text('夫婦の好みAIナビ'), findsNothing);
@@ -239,21 +240,24 @@ void main() {
     expect(spot.category, SpotCategory.dining);
   });
 
-  test('商用版：無料検索クォータ消費・リワード回復(+3)・プレミアム無制限テスト', () async {
+  test('商用版：検索クォータ消費(1日10回)・リワード回復(+5)・課金無効時の挙動テスト', () async {
+    expect(MonetizationService.enablePremiumSubscription, isFalse);
+    expect(MonetizationService.freeDailySearchLimit, 10);
+    expect(MonetizationService.rewardRecoveryAmount, 5);
     expect(await MonetizationService.isPremium(), isFalse);
     expect(
       await MonetizationService.getRemainingSearches(),
       MonetizationService.freeDailySearchLimit,
     );
 
-    // 5回まで検索成功、6回目は上限到達でfalse
+    // 10回まで検索成功、11回目は上限到達でfalse
     for (int i = 0; i < MonetizationService.freeDailySearchLimit; i++) {
       expect(await MonetizationService.tryConsumeSearch(), isTrue);
     }
     expect(await MonetizationService.getRemainingSearches(), 0);
     expect(await MonetizationService.tryConsumeSearch(), isFalse);
 
-    // リワード動画視聴で+3回回復
+    // リワード動画視聴で+5回回復
     final recovered = await MonetizationService.grantRewardSearchBonus();
     expect(recovered, MonetizationService.rewardRecoveryAmount);
     expect(await MonetizationService.tryConsumeSearch(), isTrue);
@@ -262,13 +266,13 @@ void main() {
       MonetizationService.rewardRecoveryAmount - 1,
     );
 
-    // プレミアム切替後はクォータを消費せず無制限でtrue
+    // 課金UI無効時はsetPremium(true)を呼んでもisPremium()はfalseのまま通常運用される
     await MonetizationService.setPremium(true);
-    expect(await MonetizationService.isPremium(), isTrue);
+    expect(await MonetizationService.isPremium(), isFalse);
     expect(await MonetizationService.tryConsumeSearch(), isTrue);
     expect(
       await MonetizationService.getRemainingSearches(),
-      MonetizationService.rewardRecoveryAmount - 1,
+      MonetizationService.rewardRecoveryAmount - 2,
     );
   });
 

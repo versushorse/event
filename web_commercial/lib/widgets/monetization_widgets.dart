@@ -74,19 +74,21 @@ class AdBannerBar extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 6),
-          TextButton(
-            onPressed: onOpenPremium,
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          if (MonetizationService.enablePremiumSubscription) ...[
+            const SizedBox(width: 6),
+            TextButton(
+              onPressed: onOpenPremium,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text(
+                '広告非表示',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+              ),
             ),
-            child: const Text(
-              '広告非表示',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-            ),
-          ),
+          ],
         ],
       ),
     );
@@ -153,18 +155,20 @@ class InFeedNativeAdCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                const Spacer(),
-                InkWell(
-                  onTap: onOpenPremium,
-                  child: Text(
-                    'プレミアムで広告OFF 👑',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.brown.shade700,
+                if (MonetizationService.enablePremiumSubscription) ...[
+                  const Spacer(),
+                  InkWell(
+                    onTap: onOpenPremium,
+                    child: Text(
+                      'プレミアムで広告OFF 👑',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.brown.shade700,
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
             const SizedBox(height: 8),
@@ -254,7 +258,7 @@ Future<void> showSearchQuotaExceededDialog(
                 Text('🔍 ', style: TextStyle(fontSize: 22)),
                 Expanded(
                   child: Text(
-                    '本日の無料検索枠を使い切りました',
+                    '本日の検索枠を使い切りました',
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -267,7 +271,7 @@ Future<void> showSearchQuotaExceededDialog(
                       const CircularProgressIndicator(),
                       const SizedBox(height: 14),
                       Text(
-                        '🎬 動画広告を再生中... あと $countdown 秒',
+                        '🎬 PR案内を表示中... あと $countdown 秒',
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 14,
@@ -275,24 +279,28 @@ Future<void> showSearchQuotaExceededDialog(
                       ),
                       const SizedBox(height: 6),
                       const Text(
-                        '（本番ビルドでは AdMob RewardedAd が表示されます）',
+                        '（まもなく検索回数が回復します）',
                         style: TextStyle(fontSize: 11.5, color: Colors.grey),
                       ),
                     ],
                   )
-                : const Column(
+                : Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'フリープランでは1日${MonetizationService.freeDailySearchLimit}回までGoogle最新スポット＆AI検索をご利用いただけます。',
-                        style: TextStyle(fontSize: 13, height: 1.45),
+                        MonetizationService.enablePremiumSubscription
+                            ? 'フリープランでは1日${MonetizationService.freeDailySearchLimit}回までGoogle最新スポット＆AI検索をご利用いただけます。'
+                            : '1日${MonetizationService.freeDailySearchLimit}回までGoogle最新スポット検索をご利用いただけます。',
+                        style: const TextStyle(fontSize: 13, height: 1.45),
                       ),
-                      SizedBox(height: 10),
+                      const SizedBox(height: 10),
                       Text(
-                        '• 🎬 短い動画広告を見ると +${MonetizationService.rewardRecoveryAmount}回 すぐ回復！\n'
-                        '• 👑 ファミリープレミアムなら検索無制限＆広告なし',
-                        style: TextStyle(
+                        MonetizationService.enablePremiumSubscription
+                            ? '• 🎬 短い動画広告を見ると +${MonetizationService.rewardRecoveryAmount}回 すぐ回復！\n'
+                                '• 👑 ファミリープレミアムなら検索無制限＆広告なし'
+                            : '• 🎬 短い案内を見ると +${MonetizationService.rewardRecoveryAmount}回 すぐ回復！（何度でも無料でご利用いただけます）',
+                        style: const TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w600,
                         ),
@@ -306,14 +314,15 @@ Future<void> showSearchQuotaExceededDialog(
                       onPressed: () => Navigator.of(dialogCtx).pop(),
                       child: const Text('閉じる'),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.of(dialogCtx).pop();
-                        onOpenPremium();
-                      },
-                      icon: const Icon(Icons.workspace_premium, size: 18),
-                      label: const Text('プレミアムを見る'),
-                    ),
+                    if (MonetizationService.enablePremiumSubscription)
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.of(dialogCtx).pop();
+                          onOpenPremium();
+                        },
+                        icon: const Icon(Icons.workspace_premium, size: 18),
+                        label: const Text('プレミアムを見る'),
+                      ),
                     FilledButton.icon(
                       onPressed: startSimulatedRewardAd,
                       icon: const Icon(Icons.play_circle_outline, size: 18),
@@ -357,26 +366,37 @@ Future<void> showPremiumPlanSheet(
                 children: [
                   Row(
                     children: [
-                      const Text('👑 ', style: TextStyle(fontSize: 26)),
+                      Text(
+                        MonetizationService.enablePremiumSubscription
+                            ? '👑 '
+                            : '🚗 ',
+                        style: const TextStyle(fontSize: 26),
+                      ),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'ファミリープレミアムプラン',
-                              style: TextStyle(
+                            Text(
+                              MonetizationService.enablePremiumSubscription
+                                  ? 'ファミリープレミアムプラン'
+                                  : 'おでかけナビ ご案内',
+                              style: const TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                             Text(
-                              localPremium
-                                  ? '現在の状態: プレミアム会員（無制限・広告OFF）'
-                                  : '現在の状態: フリープラン（本日残り検索 $localRemaining回）',
+                              MonetizationService.enablePremiumSubscription
+                                  ? (localPremium
+                                      ? '現在の状態: プレミアム会員（無制限・広告OFF）'
+                                      : '現在の状態: フリープラン（本日残り検索 $localRemaining回）')
+                                  : '全機能無料（本日の残り検索 $localRemaining回）',
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.bold,
-                                color: localPremium
+                                color: (MonetizationService
+                                            .enablePremiumSubscription &&
+                                        localPremium)
                                     ? Colors.amber.shade900
                                     : Colors.teal.shade800,
                               ),
@@ -388,82 +408,117 @@ Future<void> showPremiumPlanSheet(
                   ),
                   const SizedBox(height: 12),
 
-                  // 料金プランカード
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Colors.amber.shade50,
-                          Colors.orange.shade50,
+                  if (!MonetizationService.enablePremiumSubscription) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.shade50,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.teal.shade200),
+                      ),
+                      child: const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '✨ すべての機能を完全無料でご利用いただけます',
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF004D40),
+                            ),
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            '• お気に入り保存・思い出スタンプ・旅のしおりは無制限！\n'
+                            '• スポット検索は1日${MonetizationService.freeDailySearchLimit}回まで（使い切っても短い案内表示で何度でも+${MonetizationService.rewardRecoveryAmount}回回復します）\n'
+                            '• PRリンクの収益により無料で運営しています',
+                            style: TextStyle(fontSize: 12.5, height: 1.5),
+                          ),
                         ],
                       ),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.amber.shade300),
                     ),
-                    child: const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '💑 1契約で夫婦・家族2台のスマホで使えます',
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF5D4037),
-                          ),
-                        ),
-                        SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _PriceOptionBox(
-                                title: '月額プラン',
-                                price: '¥480 / 月',
-                                note: 'いつでも解約OK',
-                              ),
-                            ),
-                            SizedBox(width: 8),
-                            Expanded(
-                              child: _PriceOptionBox(
-                                title: '年額プラン (お得)',
-                                price: '¥3,600 / 年',
-                                note: '月あたり¥300 (4ヶ月分無料)',
-                                highlight: true,
-                              ),
-                            ),
+                  ] else ...[
+                    // 料金プランカード（将来のサブスク課金導入用）
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.amber.shade50,
+                            Colors.orange.shade50,
                           ],
                         ),
-                      ],
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.amber.shade300),
+                      ),
+                      child: const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '💑 1契約で夫婦・家族2台のスマホで使えます',
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF5D4037),
+                            ),
+                          ),
+                          SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _PriceOptionBox(
+                                  title: '月額プラン',
+                                  price: '¥480 / 月',
+                                  note: 'いつでも解約OK',
+                                ),
+                              ),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: _PriceOptionBox(
+                                  title: '年額プラン (お得)',
+                                  price: '¥3,600 / 年',
+                                  note: '月あたり¥300 (4ヶ月分無料)',
+                                  highlight: true,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 14),
+                    const SizedBox(height: 14),
 
-                  const Text(
-                    '✨ プレミアムで解放される機能',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  const _BenefitRow(
-                    icon: '🚫',
-                    title: 'アプリ内広告の完全非表示',
-                    desc: 'バナー・リスト内PRカードがすべて消えて快適に検索',
-                  ),
-                  const _BenefitRow(
-                    icon: '🔍',
-                    title: 'Googleスポット＆AI検索 無制限',
-                    desc: '無料枠（1日${MonetizationService.freeDailySearchLimit}回）を気にせず何度でも検索・再提案',
-                  ),
-                  const _BenefitRow(
-                    icon: '❤️',
-                    title: '夫婦お気に入り＆思い出スタンプ 無制限',
-                    desc: '無料枠（${MonetizationService.freeMaxFavorites}件）を超えて家族の思い出をずっと保存',
-                  ),
-                  const _BenefitRow(
-                    icon: '📒',
-                    title: '旅のしおり 複数作成・AI自動プランニング',
-                    desc: '大阪/名古屋/北海道など旅行ごとに何冊でも作成可能',
-                  ),
+                    const Text(
+                      '✨ プレミアムで解放される機能',
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    const _BenefitRow(
+                      icon: '🚫',
+                      title: 'アプリ内広告の完全非表示',
+                      desc: 'バナー・リスト内PRカードがすべて消えて快適に検索',
+                    ),
+                    const _BenefitRow(
+                      icon: '🔍',
+                      title: 'Googleスポット＆AI検索 無制限',
+                      desc:
+                          '無料枠（1日${MonetizationService.freeDailySearchLimit}回）を気にせず何度でも検索・再提案',
+                    ),
+                    const _BenefitRow(
+                      icon: '❤️',
+                      title: '夫婦お気に入り＆思い出スタンプ 無制限',
+                      desc:
+                          '無料枠（${MonetizationService.freeMaxFavorites}件）を超えて家族の思い出をずっと保存',
+                    ),
+                    const _BenefitRow(
+                      icon: '📒',
+                      title: '旅のしおり 複数作成・AI自動プランニング',
+                      desc: '大阪/名古屋/北海道など旅行ごとに何冊でも作成可能',
+                    ),
+                  ],
 
                   // オーナーテスト・プレビュー用の切替セクション（リリースビルド時は自動非表示）
                   if (kDebugMode) ...[
@@ -487,27 +542,29 @@ Future<void> showPremiumPlanSheet(
                             ),
                           ),
                           const SizedBox(height: 4),
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            dense: true,
-                            title: const Text(
-                              'プレミアム会員モードをONにする',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
+                          if (MonetizationService.enablePremiumSubscription)
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              dense: true,
+                              title: const Text(
+                                'プレミアム会員モードをONにする',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
+                              subtitle: const Text(
+                                'OFFにすると広告表示・検索制限ありのフリープラン挙動を確認できます',
+                                style: TextStyle(fontSize: 11),
+                              ),
+                              value: localPremium,
+                              onChanged: (val) {
+                                setSheetState(() => localPremium = val);
+                                onTogglePremium(val);
+                              },
                             ),
-                            subtitle: const Text(
-                              'OFFにすると広告表示・検索制限ありのフリープラン挙動を確認できます',
-                              style: TextStyle(fontSize: 11),
-                            ),
-                            value: localPremium,
-                            onChanged: (val) {
-                              setSheetState(() => localPremium = val);
-                              onTogglePremium(val);
-                            },
-                          ),
-                          if (!localPremium)
+                          if (!localPremium ||
+                              !MonetizationService.enablePremiumSubscription)
                             Align(
                               alignment: Alignment.centerRight,
                               child: TextButton.icon(
@@ -520,7 +577,7 @@ Future<void> showPremiumPlanSheet(
                                 },
                                 icon: const Icon(Icons.refresh, size: 16),
                                 label: const Text(
-                                  '本日の無料検索回数を5回にリセット',
+                                  '本日の検索回数を${MonetizationService.freeDailySearchLimit}回にリセット',
                                   style: TextStyle(fontSize: 12),
                                 ),
                               ),

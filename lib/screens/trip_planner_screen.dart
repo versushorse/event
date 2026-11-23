@@ -771,7 +771,8 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
   }
 
   bool _canCreateAdditionalTrip(BuildContext context) {
-    if (widget.isPremium ||
+    if (!MonetizationService.enablePremiumSubscription ||
+        widget.isPremium ||
         widget.tripPlans.length < MonetizationService.freeMaxTrips) {
       return true;
     }

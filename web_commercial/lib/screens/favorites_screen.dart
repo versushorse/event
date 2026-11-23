@@ -234,7 +234,8 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   ],
                 ),
               ),
-              if (!widget.isPremium) ...[
+              if (MonetizationService.enablePremiumSubscription &&
+                  !widget.isPremium) ...[
                 const SizedBox(height: 8),
                 InkWell(
                   onTap: widget.onOpenPremium,

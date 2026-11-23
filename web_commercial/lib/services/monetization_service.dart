@@ -181,9 +181,12 @@ class MonetizationService {
   static const String _prefQuotaDateKey = 'commercial_quota_date_v1';
   static const String _prefRemainingSearchKey = 'commercial_remaining_search_v1';
 
+  /// 将来のファミリープレミアム（サブスク課金）機能の有効化フラグ（完全無料運用のためOFF）
+  static bool get enablePremiumSubscription => false;
+
   /// 無料プランの日次検索上限・お気に入り上限・しおり上限
-  static const int freeDailySearchLimit = 5;
-  static const int rewardRecoveryAmount = 3;
+  static const int freeDailySearchLimit = 10;
+  static const int rewardRecoveryAmount = 5;
   static const int freeMaxFavorites = 10;
   static const int freeMaxTrips = 1;
 
@@ -200,8 +203,9 @@ class MonetizationService {
     return '$y-$m-$day';
   }
 
-  /// プレミアム会員（月額480円 / 年額3,600円想定）かどうかを取得
+  /// プレミアム会員かどうかを取得（課金機能無効時は常にfalse）
   static Future<bool> isPremium() async {
+    if (!enablePremiumSubscription) return false;
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_prefIsPremiumKey) ?? false;
   }

@@ -1656,7 +1656,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// お気に入りON/OFF切り替え（ハートを押した時点で夫か妻かを自動識別！）
   Future<void> _toggleFavorite(OutingSpot target) async {
-    if (!target.isFavorite &&
+    if (MonetizationService.enablePremiumSubscription &&
+        !target.isFavorite &&
         !_isPremium &&
         _favoriteSpots.length >= MonetizationService.freeMaxFavorites) {
       await showDialog<void>(
@@ -2246,7 +2247,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                   ),
                   Text(
-                    'エリア: ${_isCurrentLocationSelected ? "現在地（${_currentLocation?.label ?? _selectedRegion.label}）" : _selectedRegion.label} ｜ ${_isPremium ? "👑 プレミアム" : "🔍 無料検索 残り$_remainingSearches回"}',
+                    'エリア: ${_isCurrentLocationSelected ? "現在地（${_currentLocation?.label ?? _selectedRegion.label}）" : _selectedRegion.label} ｜ ${(MonetizationService.enablePremiumSubscription && _isPremium) ? "👑 プレミアム" : "🔍 本日の検索 残り$_remainingSearches回"}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -2289,13 +2290,20 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
-            tooltip: '👑 プラン・広告設定',
+            tooltip: MonetizationService.enablePremiumSubscription
+                ? '👑 プラン・広告設定'
+                : 'ℹ️ アプリ情報・規約',
             onPressed: _openPremiumSheet,
             icon: Icon(
-              _isPremium
-                  ? Icons.workspace_premium
-                  : Icons.workspace_premium_outlined,
-              color: _isPremium ? Colors.amber.shade800 : null,
+              MonetizationService.enablePremiumSubscription
+                  ? (_isPremium
+                      ? Icons.workspace_premium
+                      : Icons.workspace_premium_outlined)
+                  : Icons.info_outline,
+              color:
+                  (MonetizationService.enablePremiumSubscription && _isPremium)
+                      ? Colors.amber.shade800
+                      : null,
             ),
           ),
           IconButton(
