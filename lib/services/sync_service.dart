@@ -174,27 +174,21 @@ class CoupleSyncService {
     await prefs.setString(_prefTripsKey, jsonEncode(jsonList));
   }
 
-  /// 旅のしおり一覧をローカルから読み込む（初回は大阪・名古屋家族旅行しおりを自動用意）
+  /// 旅のしおり一覧をローカルから読み込む（初期状態は空リスト）
   static Future<List<TripPlan>> loadLocalTrips() async {
     final prefs = await SharedPreferences.getInstance();
     final jsonStr = prefs.getString(_prefTripsKey);
     if (jsonStr == null || jsonStr.isEmpty) {
-      final starter = [TripPlan.createOsakaNagoyaStarter()];
-      await saveLocalTrips(starter);
-      return starter;
+      return [];
     }
     try {
       final list = jsonDecode(jsonStr) as List<dynamic>;
-      final trips = list
+      return list
           .map((item) => TripPlan.fromJson(item as Map<String, dynamic>))
           .toList();
-      if (trips.isEmpty) {
-        return [TripPlan.createOsakaNagoyaStarter()];
-      }
-      return trips;
     } catch (e) {
       debugPrint('旅のしおり読み込みエラー: $e');
-      return [TripPlan.createOsakaNagoyaStarter()];
+      return [];
     }
   }
 

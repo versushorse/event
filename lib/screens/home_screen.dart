@@ -13,6 +13,7 @@ import '../services/weather_service.dart';
 import '../widgets/monetization_widgets.dart';
 import '../widgets/safe_chips.dart';
 import '../widgets/visited_memory_widgets.dart';
+import 'dart:convert';
 import 'dart:math';
 import 'favorites_screen.dart';
 import 'trip_planner_screen.dart';
@@ -34,8 +35,8 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 雨の日・寒い日安心モード（案B：天候連動スイッチ）
   bool _isRainOrColdMode = false;
 
-  /// 家族の旅のしおり一覧（案A：大阪・名古屋旅行＆週末ドライブ）
-  List<TripPlan> _tripPlans = [TripPlan.createOsakaNagoyaStarter()];
+  /// 家族の旅のしおり一覧（初期状態は空で、ユーザーが必要に応じて自由に作成）
+  List<TripPlan> _tripPlans = [];
   int _selectedTripIndex = 0;
 
   /// 出発エリア名
@@ -161,6 +162,8 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 初回起動時の自動取得完了フラグ
   bool _hasAutoFetchedSpots = false;
 
+  static const String _prefPackingListKey = 'commercial_packing_list_v1';
+
   /// ドライブ持ち物チェックリストの状態
   final Map<String, bool> _packingList = {
     'エコバッグ・保冷バッグ（マルシェ・道の駅用）': true,
@@ -173,6 +176,41 @@ class _HomeScreenState extends State<HomeScreen> {
     '羽織る上着・レジャーシート': false,
   };
 
+  Future<void> _loadPackingList() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonStr = prefs.getString(_prefPackingListKey);
+      if (jsonStr == null || jsonStr.isEmpty) return;
+      final decoded = jsonDecode(jsonStr);
+      if (decoded is Map<String, dynamic>) {
+        final restored = <String, bool>{};
+        for (final entry in decoded.entries) {
+          if (entry.key.trim().isNotEmpty && entry.value is bool) {
+            restored[entry.key] = entry.value as bool;
+          }
+        }
+        if (mounted) {
+          setState(() {
+            _packingList
+              ..clear()
+              ..addAll(restored);
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('持ち物チェックリスト読み込みエラー: $e');
+    }
+  }
+
+  Future<void> _savePackingList() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefPackingListKey, jsonEncode(_packingList));
+    } catch (e) {
+      debugPrint('持ち物チェックリスト保存エラー: $e');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -184,6 +222,7 @@ class _HomeScreenState extends State<HomeScreen> {
         '🗺️ 【${_selectedRegion.label}】Googleマップ＆AIによる厳選お出かけスポットを表示しています！';
     _loadCustomRegions();
     _loadCustomGenres();
+    _loadPackingList();
     _initMonetization();
     _initCoupleSync();
 
@@ -398,7 +437,21 @@ class _HomeScreenState extends State<HomeScreen> {
     final code = await CoupleSyncService.getRoomCode();
     final savedRole = await CoupleSyncService.getMyRole();
     var savedFavs = await CoupleSyncService.loadLocalFavorites();
-    final savedTrips = await CoupleSyncService.loadLocalTrips();
+    var savedTrips = await CoupleSyncService.loadLocalTrips();
+    final prefs = await SharedPreferences.getInstance();
+
+    // 初回のみ旧サンプルしおりが残っている場合は空状態へ移行（ユーザー作成分は保護）
+    final hasClearedStarterTrip =
+        prefs.getBool('commercial_cleared_starter_trip_v1') ?? false;
+    if (!hasClearedStarterTrip) {
+      await prefs.setBool('commercial_cleared_starter_trip_v1', true);
+      if (savedTrips.length == 1 &&
+          savedTrips.first.id == 'trip_osaka_nagoya_starter') {
+        savedTrips = [];
+        await CoupleSyncService.saveLocalTrips([]);
+      }
+    }
+
     if (mounted) {
       setState(() {
         _tripPlans = savedTrips;
@@ -409,7 +462,6 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
 
-    final prefs = await SharedPreferences.getInstance();
     final hasIsolatedFavs =
         prefs.getBool('commercial_isolated_favs_v1') ?? false;
     if (!hasIsolatedFavs) {
@@ -1891,10 +1943,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// 現在の旅のしおりにスポットを1件追加する（案A）
   void _addSpotToCurrentTripPlan(OutingSpot spot) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
     final current = _tripPlans.isNotEmpty
         ? _tripPlans[_selectedTripIndex.clamp(0, _tripPlans.length - 1)]
-        : TripPlan.createOsakaNagoyaStarter();
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
+        : TripPlan(
+            id: 'trip_$nowMs',
+            title: '🚗 ${spot.title}のお出かけしおり',
+            subtitle: '気になるスポットから作成',
+            totalDays: 1,
+            items: const [],
+            updatedAtMs: nowMs,
+          );
     final newItem = TripScheduleItem(
       id: 'spot_${nowMs}_${spot.id}',
       dayNumber: 1,
@@ -4752,6 +4811,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// 🎒 ドライブお出かけ持ち物チェックリストモーダル
   void _showPackingListSheet(BuildContext context) {
+    final addCtrl = TextEditingController();
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -4760,9 +4820,30 @@ class _HomeScreenState extends State<HomeScreen> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             final checkedCount = _packingList.values.where((v) => v).length;
+
+            void addPackingItem() {
+              final name = addCtrl.text.trim();
+              if (name.isEmpty) return;
+              if (_packingList.containsKey(name)) {
+                ScaffoldMessenger.of(this.context).showSnackBar(
+                  SnackBar(content: Text('「$name」はすでにリストにあります')),
+                );
+                return;
+              }
+              setState(() => _packingList[name] = false);
+              setModalState(() {});
+              addCtrl.clear();
+              _savePackingList();
+            }
+
             return SafeArea(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  8,
+                  20,
+                  MediaQuery.of(context).viewInsets.bottom + 28,
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -4784,59 +4865,112 @@ class _HomeScreenState extends State<HomeScreen> {
                       '週末のお出かけ前に車に積んだかチェックしましょう！（※ PR：Amazonリンクを含みます）',
                       style: TextStyle(fontSize: 12, color: Colors.grey),
                     ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: addCtrl,
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) => addPackingItem(),
+                            decoration: const InputDecoration(
+                              hintText: '例：常備薬、ベビーカー、カメラ...',
+                              isDense: true,
+                              contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 10),
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          onPressed: addPackingItem,
+                          icon: const Icon(Icons.add, size: 18),
+                          label: const Text('追加'),
+                        ),
+                      ],
+                    ),
                     const Divider(height: 20),
-                    ..._packingList.keys.map((item) {
-                      final isChecked = _packingList[item] ?? false;
-                      final amazonKeyword = item.split('（').first;
-                      return Row(
-                        children: [
-                          Expanded(
-                            child: CheckboxListTile(
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              controlAffinity: ListTileControlAffinity.leading,
-                              title: Text(
-                                item,
-                                style: TextStyle(
-                                  fontSize: 13.5,
-                                  decoration: isChecked
-                                      ? TextDecoration.lineThrough
-                                      : null,
-                                  color:
-                                      isChecked ? Colors.grey : Colors.black87,
+                    if (_packingList.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Center(
+                          child: Text(
+                            '持ち物がありません。上の入力欄から追加してください。',
+                            style: TextStyle(fontSize: 13, color: Colors.grey),
+                          ),
+                        ),
+                      )
+                    else
+                      ..._packingList.keys.map((item) {
+                        final isChecked = _packingList[item] ?? false;
+                        final amazonKeyword = item.split('（').first;
+                        return Row(
+                          children: [
+                            Expanded(
+                              child: CheckboxListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                title: Text(
+                                  item,
+                                  style: TextStyle(
+                                    fontSize: 13.5,
+                                    decoration: isChecked
+                                        ? TextDecoration.lineThrough
+                                        : null,
+                                    color: isChecked
+                                        ? Colors.grey
+                                        : Colors.black87,
+                                  ),
+                                ),
+                                value: isChecked,
+                                onChanged: (val) {
+                                  setState(
+                                      () => _packingList[item] = val ?? false);
+                                  setModalState(() {});
+                                  _savePackingList();
+                                },
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () => _launchWebUrl(
+                                AffiliateLinkBuilder.buildAmazonGoodsUrl(
+                                  amazonKeyword,
                                 ),
                               ),
-                              value: isChecked,
-                              onChanged: (val) {
-                                setState(
-                                    () => _packingList[item] = val ?? false);
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: const Text(
+                                'PR Amazon',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: '項目を削除',
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(
+                                  minWidth: 28, minHeight: 28),
+                              icon: const Icon(Icons.close,
+                                  size: 16, color: Colors.grey),
+                              onPressed: () {
+                                setState(() => _packingList.remove(item));
                                 setModalState(() {});
+                                _savePackingList();
                               },
                             ),
-                          ),
-                          TextButton(
-                            onPressed: () => _launchWebUrl(
-                              AffiliateLinkBuilder.buildAmazonGoodsUrl(
-                                amazonKeyword,
-                              ),
-                            ),
-                            style: TextButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 4),
-                              minimumSize: Size.zero,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            child: const Text(
-                              'PR Amazon',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    }),
+                          ],
+                        );
+                      }),
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
@@ -4852,7 +4986,7 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         );
       },
-    );
+    ).whenComplete(addCtrl.dispose);
   }
 
   /// 出発エリア変更ダイアログ

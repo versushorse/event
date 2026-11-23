@@ -39,7 +39,14 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
 
   TripPlan get _currentPlan {
     if (widget.tripPlans.isEmpty) {
-      return TripPlan.createOsakaNagoyaStarter();
+      return const TripPlan(
+        id: 'empty',
+        title: '新しい旅のしおり',
+        subtitle: '',
+        totalDays: 1,
+        items: [],
+        updatedAtMs: 0,
+      );
     }
     final idx = widget.selectedTripIndex.clamp(0, widget.tripPlans.length - 1);
     return widget.tripPlans[idx];
@@ -72,6 +79,48 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    if (widget.tripPlans.isEmpty) {
+      return Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('📒', style: TextStyle(fontSize: 52)),
+              const SizedBox(height: 12),
+              const Text(
+                'まだ旅のしおりがありません',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '家族のお出かけや旅行のスケジュールを自由に作成できます。\nスポット詳細から「しおりに追加」することもできます。',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: colorScheme.onSurfaceVariant,
+                  height: 1.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: () => _showCreateNewPlanDialog(context),
+                icon: const Icon(Icons.add),
+                label: const Text('新しいしおりを作成'),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: widget.onTriggerSync,
+                icon: const Icon(Icons.sync),
+                label: const Text('スマホ間で同期'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final plan = _currentPlan;
     final activeDay = _selectedDay.clamp(1, plan.totalDays);
     final dayItems =
@@ -946,18 +995,17 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                 ],
               ),
               actions: [
-                if (widget.tripPlans.length > 1)
-                  TextButton(
-                    style: TextButton.styleFrom(foregroundColor: Colors.red),
-                    onPressed: () {
-                      final list = List<TripPlan>.from(widget.tripPlans)
-                        ..removeWhere((p) => p.id == plan.id);
-                      widget.onUpdateTrips(list);
-                      widget.onSelectTrip(0);
-                      Navigator.of(dialogCtx).pop();
-                    },
-                    child: const Text('このしおりを削除'),
-                  ),
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: Colors.red),
+                  onPressed: () {
+                    final list = List<TripPlan>.from(widget.tripPlans)
+                      ..removeWhere((p) => p.id == plan.id);
+                    widget.onUpdateTrips(list);
+                    widget.onSelectTrip(0);
+                    Navigator.of(dialogCtx).pop();
+                  },
+                  child: const Text('このしおりを削除'),
+                ),
                 TextButton(
                   onPressed: () => Navigator.of(dialogCtx).pop(),
                   child: const Text('キャンセル'),
